@@ -1,0 +1,6 @@
+{
+  "name": "Bot IPTV Auto-Venta",
+  "description": "Simulador, configurador y exportador de bot de WhatsApp con Baileys para la venta automática de IPTV, generación de demos y reenvío de comprobantes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
