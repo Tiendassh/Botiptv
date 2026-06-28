@@ -27,7 +27,8 @@ import {
   CheckCircle2, 
   UserCheck, 
   Download,
-  Info
+  Info,
+  Moon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -105,6 +106,7 @@ export default function Home() {
   // Estado del Bot de WhatsApp
   const [botStatus, setBotStatus] = useState<"DISCONNECTED" | "SCANNING" | "CONNECTED">("CONNECTED");
   const [activeTab, setActiveTab] = useState<"chat" | "dashboard" | "admin" | "code">("chat");
+  const [chatDarkMode, setChatDarkMode] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [currentClientNumber] = useState("5493764999999");
   
@@ -328,15 +330,18 @@ export default function Home() {
   };
 
   // Formatear texto con soporte básico de markdown de whatsapp (*negrita*, _cursiva_, `mono`)
-  const formatWhatsappMessage = (text: string) => {
+  const formatWhatsappMessage = (text: string, isDark: boolean = false) => {
     if (!text) return "";
     let formatted = text;
     // Negrita *texto*
-    formatted = formatted.replace(/\*([^*]+)\*/g, '<strong class="font-bold text-gray-900">$1</strong>');
+    const strongClass = isDark ? "font-bold text-white" : "font-bold text-gray-900";
+    formatted = formatted.replace(/\*([^*]+)\*/g, `<strong class="${strongClass}">$1</strong>`);
     // Cursiva _texto_
-    formatted = formatted.replace(/_([^_]+)_/g, '<em class="italic text-gray-700">$1</em>');
+    const emClass = isDark ? "italic text-gray-300" : "italic text-gray-700";
+    formatted = formatted.replace(/_([^_]+)_/g, `<em class="${emClass}">$1</em>`);
     // Monocromo `texto`
-    formatted = formatted.replace(/`([^`]+)`/g, '<code class="bg-gray-100 border border-gray-200 rounded px-1 text-xs font-mono text-pink-600">$1</code>');
+    const codeClass = isDark ? "bg-[#2a3942] border border-slate-700 rounded px-1 text-xs font-mono text-pink-400" : "bg-gray-100 border border-gray-200 rounded px-1 text-xs font-mono text-pink-600";
+    formatted = formatted.replace(/`([^`]+)`/g, `<code class="${codeClass}">$1</code>`);
     // Saltos de línea
     formatted = formatted.replace(/\n/g, "<br />");
     return <span dangerouslySetInnerHTML={{ __html: formatted }} />;
@@ -825,38 +830,78 @@ conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err))
                     <span className="text-xs font-semibold text-gray-700">Habilitar IA de Gemini</span>
                   </label>
                 </div>
+
+                {/* Card de Modo Oscuro */}
+                <div className="bg-gradient-to-br from-gray-900/5 to-slate-900/5 rounded-2xl p-5 border border-gray-200 shadow-sm">
+                  <div className="flex justify-between items-start mb-2">
+                    <h4 className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                      <Moon size={16} className="text-slate-700" />
+                      Modo Oscuro del Chat
+                    </h4>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      chatDarkMode ? "bg-slate-800 text-slate-100" : "bg-gray-100 text-gray-500"
+                    }`}>
+                      {chatDarkMode ? "ACTIVO" : "INACTIVO"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-600 mb-3 leading-relaxed">
+                    Activa el modo oscuro en la interfaz de chat simulado para una experiencia visual nocturna al estilo de WhatsApp Web.
+                  </p>
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/50 transition">
+                    <input 
+                      type="checkbox"
+                      checked={chatDarkMode}
+                      onChange={(e) => setChatDarkMode(e.target.checked)}
+                      className="rounded border-gray-300 text-slate-700 focus:ring-slate-700"
+                    />
+                    <span className="text-xs font-semibold text-gray-700">Modo Oscuro en Simulador</span>
+                  </label>
+                </div>
               </div>
 
               {/* Contenedor del Chat de WhatsApp */}
-              <div className="lg:col-span-8 bg-white rounded-3xl border border-gray-200 shadow-md overflow-hidden flex flex-col h-[640px]">
+              <div className={`lg:col-span-8 rounded-3xl border shadow-md overflow-hidden flex flex-col h-[640px] transition-all duration-200 ${
+                chatDarkMode ? "bg-[#0b141a] border-slate-800/80" : "bg-white border-gray-200"
+              }`}>
                 {/* Cabecera del Chat */}
-                <div className="bg-[#075E54] text-white px-5 py-3 flex justify-between items-center border-b border-[#054c44]">
+                <div className={`px-5 py-3 flex justify-between items-center border-b transition-all duration-200 ${
+                  chatDarkMode ? "bg-[#202c33] border-[#2f3b43] text-gray-100" : "bg-[#075E54] text-white border-[#054c44]"
+                }`}>
                   <div className="flex items-center gap-3">
                     <div className="relative">
                       <div className="h-10 w-10 rounded-full bg-emerald-500 flex items-center justify-center text-white font-bold text-lg shadow">
                         B
                       </div>
                       {botStatus === "CONNECTED" && (
-                        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-400 border-2 border-[#075E54]" />
+                        <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-400 border-2 transition-all duration-200 ${
+                          chatDarkMode ? "border-[#202c33]" : "border-[#075E54]"
+                        }`} />
                       )}
                     </div>
                     <div>
-                      <h4 className="font-bold text-sm sm:text-base">{config.panelName} • Bot de Ventas</h4>
-                      <p className="text-[11px] text-emerald-200">
+                      <h4 className={`font-bold text-sm sm:text-base ${chatDarkMode ? "text-gray-100" : "text-white"}`}>{config.panelName} • Bot de Ventas</h4>
+                      <p className={`text-[11px] transition-all duration-200 ${chatDarkMode ? "text-[#8696a0]" : "text-emerald-200"}`}>
                         {isTyping ? "Escribiendo..." : botStatus === "CONNECTED" ? "En línea (Automático)" : "Fuera de línea"}
                       </p>
                     </div>
                   </div>
 
-                  <div className="text-xs bg-[#128C7E]/40 border border-emerald-500/20 px-2.5 py-1 rounded font-mono">
+                  <div className={`text-xs px-2.5 py-1 rounded font-mono transition-all duration-200 ${
+                    chatDarkMode ? "bg-[#2a3942] text-emerald-400 border border-slate-700/50" : "bg-[#128C7E]/40 border border-emerald-500/20 text-white"
+                  }`}>
                     Cliente: {currentClientNumber}
                   </div>
                 </div>
 
                 {/* Cuerpo del Chat (Mensajes) */}
                 <div 
-                  className="flex-grow p-4 sm:p-6 overflow-y-auto space-y-4 bg-[#E5DDD5]" 
-                  style={{ backgroundImage: "url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')", backgroundBlendMode: "overlay" }}
+                  className="flex-grow p-4 sm:p-6 overflow-y-auto space-y-4 transition-all duration-200" 
+                  style={{ 
+                    backgroundImage: "url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')", 
+                    backgroundBlendMode: chatDarkMode ? "multiply" : "overlay",
+                    backgroundColor: chatDarkMode ? "#0b141a" : "#E5DDD5",
+                    opacity: chatDarkMode ? 0.96 : 1
+                  }}
                 >
                   {messages.map((msg) => {
                     const isClient = msg.sender === "client";
@@ -871,14 +916,14 @@ conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err))
                           </div>
                         )}
                         
-                        <div className={`max-w-[85%] sm:max-w-[70%] rounded-xl px-3.5 py-2 shadow-sm relative ${
+                        <div className={`max-w-[85%] sm:max-w-[70%] rounded-xl px-3.5 py-2 shadow-sm relative transition-all duration-150 ${
                           isClient 
-                            ? "bg-[#DCF8C6] text-gray-800 rounded-tr-none" 
-                            : "bg-white text-gray-800 rounded-tl-none"
+                            ? (chatDarkMode ? "bg-[#005c4b] text-gray-100 rounded-tr-none" : "bg-[#DCF8C6] text-gray-800 rounded-tr-none")
+                            : (chatDarkMode ? "bg-[#202c33] text-gray-100 rounded-tl-none" : "bg-white text-gray-800 rounded-tl-none")
                         }`}>
                           {/* Contenido multimedia si existe */}
                           {msg.mediaUrl && (
-                            <div className="mb-2 rounded-lg overflow-hidden border border-gray-200/50 max-w-[260px]">
+                            <div className={`mb-2 rounded-lg overflow-hidden border max-w-[260px] ${chatDarkMode ? "border-slate-800" : "border-gray-200/50"}`}>
                               <Image 
                                 src={msg.mediaUrl} 
                                 alt="Comprobante cargado" 
@@ -887,24 +932,24 @@ conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err))
                                 className="object-cover w-full h-44 cursor-pointer hover:scale-105 transition duration-200"
                                 unoptimized
                               />
-                              <div className="bg-black/5 p-1.5 text-center text-[10px] font-mono text-gray-500">
+                              <div className={`p-1.5 text-center text-[10px] font-mono transition-colors duration-150 ${chatDarkMode ? "bg-[#182229] text-gray-400" : "bg-black/5 text-gray-500"}`}>
                                 📎 archivo_comprobante.jpg
                               </div>
                             </div>
                           )}
 
                           {/* Texto formateado */}
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                            {formatWhatsappMessage(msg.text)}
+                          <p className={`text-sm leading-relaxed whitespace-pre-wrap transition-colors duration-150 ${chatDarkMode ? "text-gray-100" : ""}`}>
+                            {formatWhatsappMessage(msg.text, chatDarkMode)}
                           </p>
 
                           {/* Footer de mensaje con hora y checkmarks */}
-                          <div className="text-[9px] text-gray-400 mt-1.5 flex justify-end items-center gap-1">
+                          <div className={`text-[9px] mt-1.5 flex justify-end items-center gap-1 transition-colors duration-150 ${chatDarkMode ? "text-[#8696a0]" : "text-gray-400"}`}>
                             <span>{msg.timestamp}</span>
                             {isClient ? (
                               <CheckCheck size={13} className="text-[#34B7F1]" />
                             ) : (
-                              <CheckCheck size={13} className="text-gray-400" />
+                              <CheckCheck size={13} className={`transition-colors duration-150 ${chatDarkMode ? "text-[#8696a0]" : "text-gray-400"}`} />
                             )}
                           </div>
                         </div>
@@ -918,7 +963,9 @@ conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err))
                       <div className="h-6 w-6 rounded-full bg-emerald-700 text-white text-[10px] flex items-center justify-center font-bold">
                         AI
                       </div>
-                      <div className="bg-white rounded-xl rounded-tl-none px-4 py-3 shadow-sm text-xs text-gray-500 italic flex items-center gap-2">
+                      <div className={`rounded-xl rounded-tl-none px-4 py-3 shadow-sm text-xs italic flex items-center gap-2 transition-colors duration-150 ${
+                        chatDarkMode ? "bg-[#202c33] text-gray-300" : "bg-white text-gray-500"
+                      }`}>
                         <span className="flex space-x-1">
                           <span className="h-1.5 w-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
                           <span className="h-1.5 w-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -933,12 +980,18 @@ conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err))
                 </div>
 
                 {/* Footer de Entrada de Texto (Enviar mensajes / Comprobantes) */}
-                <div className="bg-[#F0F0F0] p-3 border-t border-gray-200 flex items-center gap-3">
+                <div className={`p-3 border-t flex items-center gap-3 transition-colors duration-200 ${
+                  chatDarkMode ? "bg-[#1f2c34] border-[#2f3b43]" : "bg-[#F0F0F0] border-gray-200"
+                }`}>
                   {/* Botón de Enviar Imagen / Comprobante */}
                   <div className="relative">
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-2.5 bg-white rounded-full hover:bg-gray-100 border border-gray-200 text-gray-500 hover:text-gray-800 shadow-sm transition flex items-center justify-center cursor-pointer"
+                      className={`p-2.5 rounded-full border shadow-sm transition flex items-center justify-center cursor-pointer ${
+                        chatDarkMode 
+                          ? "bg-[#2a3942] hover:bg-[#374248] border-transparent text-gray-300 hover:text-white" 
+                          : "bg-white hover:bg-gray-100 border-gray-200 text-gray-500 hover:text-gray-800"
+                      }`}
                       title="Simular subir comprobante de pago"
                     >
                       <ImageIcon size={20} />
@@ -968,7 +1021,11 @@ conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err))
                       type="text"
                       name="clientMessage"
                       placeholder="Escribe un mensaje al bot (ej: hola, 1, o tu pregunta)..."
-                      className="flex-grow bg-white border border-gray-200 rounded-full px-5 py-2.5 text-sm focus:outline-none focus:border-[#128C7E] shadow-inner"
+                      className={`flex-grow rounded-full px-5 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#128C7E] shadow-inner transition-colors duration-200 border ${
+                        chatDarkMode 
+                          ? "bg-[#2a3942] border-transparent text-white placeholder-gray-400 focus:bg-[#374248]" 
+                          : "bg-white border-gray-200 text-gray-800 placeholder-gray-400"
+                      }`}
                       disabled={botStatus !== "CONNECTED"}
                     />
                     <button 
@@ -983,7 +1040,9 @@ conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err))
 
                 {/* Barra de Progreso de Subida de Archivo */}
                 {uploadProgress !== null && (
-                  <div className="bg-[#075E54] text-white px-4 py-2 flex items-center justify-between text-xs font-mono">
+                  <div className={`px-4 py-2 flex items-center justify-between text-xs font-mono transition-colors duration-200 ${
+                    chatDarkMode ? "bg-[#202c33] text-gray-300 border-t border-[#2f3b43]" : "bg-[#075E54] text-white"
+                  }`}>
                     <span className="flex items-center gap-2">
                       <RefreshCw size={14} className="animate-spin" />
                       Cargando comprobante de pago...
