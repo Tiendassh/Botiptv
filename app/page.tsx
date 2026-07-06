@@ -349,178 +349,225 @@ export default function Home() {
 
   // Generar dinámicamente el contenido de configuracion.js
   const configuracionJsCode = `// configuracion.js
-// Archivo de parámetros estáticos para el bot en producción (Express)
+require('dotenv').config();
+const { createClient } = require('@supabase/supabase-js');
+
+// Importar desde variables de entorno
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error("Faltan credenciales de Supabase en el archivo .env");
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 module.exports = {
-  // Puerto local del servidor Express
-  port: process.env.PORT || 3000,
-
-  // Nombre comercial de tu servicio IPTV
-  panel_name: "${config.panelName}"
+  puerto: process.env.PORT || 3000,
+  webhookPath: '/webhook-bot', // Ruta donde Cloudwapi enviará los POST
+  supabase,
+  
+  // Mensajes de error base
+  mensajes: {
+    errorGenerico: "Lo siento, hubo un error procesando tu solicitud.",
+    sinCuentas: "En este momento no hay cuentas demo disponibles. Intenta más tarde.",
+    mantenimiento: "El sistema de demos se encuentra en mantenimiento."
+  }
 };`;
 
   // Generar dinámicamente el contenido de demoManager.js
   const demoManagerJsCode = `// demoManager.js
-// Módulo para procesar la rotación de contraseñas de las cuentas demo fijas
+const { supabase } = require('./configuracion');
 
 /**
- * Generador de contraseña aleatoria de 6 caracteres
+ * Obtiene la configuración del panel desde Supabase
  */
-function generateRandomPassword(length = 6) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  let password = "";
-  for (let i = 0; i < length; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
+async function obtenerConfiguracion() {
+    const { data, error } = await supabase
+        .from('configuracion')
+        .select('variable, valor');
+
+    if (error) {
+        console.error("Error al obtener configuración:", error);
+        throw error;
+    }
+
+    const configMap = {};
+    data.forEach(item => {
+        configMap[item.variable] = item.valor;
+    });
+
+    return {
+        url: configMap['url_panel'],
+        usuario: configMap['usuario_panel'],
+        contrasena: configMap['contrasena_panel'],
+        linkPlataforma: configMap['link_plataforma'],
+        precioMes: configMap['precio_mes'],
+        aliasMercaPago: configMap['alias_merca_pago']
+    };
 }
 
 /**
- * Procesa la rotación de usos de la cuenta seleccionada.
- * Si el nuevo contador es múltiplo de 3 (3, 6, 9...), genera una nueva contraseña
- * aleatoria de 6 caracteres y marca debeCambiarEnPanel como true.
+ * Procesa la solicitud de demo conectándose a Supabase.
+ * Ordena por contador_usos ascendente, toma la primera.
+ * Incrementa contador, si es múltiplo de 3, genera nueva contraseña.
  */
-function procesarRotacionDemo(cuentaActual) {
-  if (!cuentaActual) {
-    cuentaActual = { id: 1, usuario: "demo_default", contrasena: "123456", Contador_Usos: 0 };
-  }
-  
-  const id = cuentaActual.id || "";
-  const usuario = cuentaActual.usuario || "";
-  let contrasena = cuentaActual.contrasena || cuentaActual.Contrasena_Actual || "";
-  
-  // Extraer el contador con soporte para ambas nomenclaturas (Sheets y locales)
-  const contadorRaw = cuentaActual.Contador_Usos !== undefined 
-    ? cuentaActual.Contador_Usos 
-    : (cuentaActual.contador_usos !== undefined ? cuentaActual.contador_usos : 0);
+async function procesarRotacionDemo() {
+    // 1. Obtener la cuenta menos usada
+    const { data: cuentas, error: errorSelect } = await supabase
+        .from('cuentas_demo')
+        .select('*')
+        .order('contador_usos', { ascending: true })
+        .limit(1);
+
+    if (errorSelect) throw errorSelect;
     
-  let contadorUsos = parseInt(String(contadorRaw), 10);
-  if (isNaN(contadorUsos)) {
-    contadorUsos = 0;
-  }
-  
-  let debeCambiarEnPanel = false;
-  
-  // Incrementar Contador_Usos por 1
-  const nuevoContador = contadorUsos + 1;
-  
-  // Cada vez que es múltiplo de 3 (3, 6, 9...), generamos nueva contraseña
-  if (nuevoContador > 0 && nuevoContador % 3 === 0) {
-    contrasena = generateRandomPassword();
-    debeCambiarEnPanel = true;
-  }
-  
-  return {
-    id,
-    usuario,
-    contrasena,
-    nuevoContador,
-    debeCambiarEnPanel
-  };
+    if (!cuentas || cuentas.length === 0) {
+        throw new Error("No hay cuentas disponibles en la base de datos.");
+    }
+
+    const cuentaActual = cuentas[0];
+    const id = cuentaActual.id;
+    const usuario = cuentaActual.usuario;
+    let contrasena = cuentaActual.contrasena;
+    
+    let contadorUsos = parseInt(cuentaActual.contador_usos, 10) || 0;
+    
+    // Incrementar contador
+    const nuevoContador = contadorUsos + 1;
+    let debeActualizarPanel = false;
+
+    // Si el contador es múltiplo de 3, generamos nueva contraseña
+    if (nuevoContador > 0 && nuevoContador % 3 === 0) {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let randomPass = "";
+        for (let i = 0; i < 6; i++) {
+            randomPass += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        contrasena = randomPass;
+        debeActualizarPanel = true;
+    }
+
+    // 2. Actualizar en Supabase
+    const { error: errorUpdate } = await supabase
+        .from('cuentas_demo')
+        .update({ 
+            contador_usos: nuevoContador,
+            contrasena: contrasena
+        })
+        .eq('id', id);
+
+    if (errorUpdate) throw errorUpdate;
+
+    return {
+        usuario,
+        nuevaContrasena: contrasena,
+        nuevoContador,
+        debeActualizarPanel
+    };
 }
 
 module.exports = {
-  procesarRotacionDemo,
-  generateRandomPassword
+  obtenerConfiguracion,
+  procesarRotacionDemo
 };`;
 
   // Generar dinámicamente el contenido de index.js
   const indexJsCode = `// index.js
-// Servidor principal Express.js para el webhook de Make (Integromat) + Cloudwapi
+// Servidor Express para recibir webhooks desde Cloudwapi (WhatsApp)
 
 const express = require("express");
-const configuracion = require("./configuracion");
-const demoManager = require("./demoManager");
+const config = require("./configuracion");
+const { procesarRotacionDemo, obtenerConfiguracion } = require("./demoManager");
 
 const app = express();
 app.use(express.json());
 
-// Endpoint del webhook para recibir peticiones desde Make (Integromat)
-app.post("/webhook-bot", (req, res) => {
+// Ruta API para la App de Android (opcional, como pedía el usuario)
+app.get('/obtener-configuracion', async (req, res) => {
+    try {
+        const configData = await obtenerConfiguracion();
+        return res.status(200).json({
+            linkPlataforma: configData.linkPlataforma,
+            precioMes: configData.precioMes,
+            alias_merca_pago: configData.aliasMercaPago
+        });
+    } catch (error) {
+        console.error("Error al leer Supabase:", error);
+        return res.status(500).json({ error: 'Error al consultar la base de datos de Supabase.' });
+    }
+});
+
+// Endpoint que recibirá la llamada HTTP desde Cloudwapi / Chatbot
+app.post(config.webhookPath, async (req, res) => {
   try {
-    const { telefono, mensajeUsuario, cuentaSeleccionada, aliasBrubank } = req.body;
+    const { telefono, mensajeUsuario } = req.body;
 
-    if (!mensajeUsuario) {
-      return res.status(400).json({ success: false, error: "mensajeUsuario es requerido" });
+    // Validación básica
+    if (!telefono || !mensajeUsuario) {
+      return res.status(400).json({ error: "Faltan datos requeridos (telefono, mensajeUsuario)" });
     }
 
-    const textNormalized = String(mensajeUsuario).toLowerCase().trim();
+    console.log(\`Mensaje recibido de \${telefono}: \${mensajeUsuario}\`);
+    
+    let textoParaEnviar = "";
 
-    // 1. Caso: Precios o Pago ("precio", "pagar", u opción "2")
-    if (textNormalized.includes("precio") || textNormalized.includes("pagar") || textNormalized === "2") {
-      const currentAlias = aliasBrubank || "${config.paymentAlias}";
-      const preciosMsg = \`💰 *Planes y Precios del Servicio* 📺\\n\\nDisfruta del mejor entretenimiento sin interrupciones:\\n\\n⭐ *1 Mes Premium:* \${config.price1Month || "$3500 ARS"}\\n⭐ *3 Meses Premium:* \${config.price3Months || "$9000 ARS"} (¡Con descuento!)\\n\\n📱 *Método de Pago (Mercado Pago / Transferencia):*\\n👉 *Alias:* \\\`\${currentAlias}\\\`\\n👉 *Titular:* IPTV Ventas S.A.\\n\\n⚠️ *IMPORTANTE:* Una vez realizado el pago, envía la captura del comprobante por este chat para que activemos tus accesos premium automáticamente.\`;
-      
-      return res.json({
-        success: true,
-        accion: "enviar_precios",
-        textoParaEnviar: preciosMsg
-      });
-    }
+    // Obtener configuración general desde Supabase
+    const configPanel = await obtenerConfiguracion();
 
-    // 2. Caso: Generar Demo ("demo" u opción "1")
-    if (textNormalized.includes("demo") || textNormalized === "1") {
-      // Rotar y procesar la cuenta provista por Google Sheets desde Make
-      const cuenta = cuentaSeleccionada || { id: 1, usuario: "demo_default", contrasena: "123456", Contador_Usos: 0 };
-      const resultado = demoManager.procesarRotacionDemo(cuenta);
-
-      const textoParaEnviar = \`📺 *¡Demo gratuita generada con éxito!* 🎉\\n\\nAquí tienes tus credenciales de acceso válidas por *2 horas*:\\n\\n👤 *Usuario:* \\\`\${resultado.usuario}\\\`\\n🔑 *Contraseña:* \\\`\${resultado.contrasena}\\\`\\n\\n📱 *Guía de instalación:* ${config.installGuideUrl}\\n🔢 *Código Downloader:* \${config.downloaderCode || "82541"}\\n\\n_Recuerda que solo se permite una demo por número de celular para evitar abusos._\`;
-
-      let avisoAdmin = "";
-      if (resultado.debeCambiarEnPanel) {
-        avisoAdmin = \`⚠️ *AVISO ADMINISTRADOR:* La cuenta demo con ID \${resultado.id} (Usuario: \${resultado.usuario}) ha alcanzado un múltiplo de 3 usos. Se ha generado una nueva contraseña: *\${resultado.contrasena}*. Por favor, actualízala en el panel IPTV.\`;
+    // 1. Detectar si el usuario pide DEMO
+    if (mensajeUsuario === "1" || mensajeUsuario.toLowerCase().includes("demo")) {
+      try {
+        const rotacion = await procesarRotacionDemo();
+        
+        textoParaEnviar = \`¡Hola! Aquí tienes tu demo generada automáticamente:\\n\\n\` +
+                          \`📺 *App Recomendada*: IPTV Smarters Pro\\n\` +
+                          \`👤 *Usuario*: \${rotacion.usuario}\\n\` +
+                          \`🔑 *Contraseña*: \${rotacion.nuevaContrasena}\\n\\n\` +
+                          \`Disfruta del mejor contenido.\`;
+                          
+        if (rotacion.debeActualizarPanel) {
+            console.log(\`⚠️ AVISO: Actualizar en el panel IPTV: Usuario \${rotacion.usuario} - Nueva pass: \${rotacion.nuevaContrasena}\`);
+            // Aquí podrías agregar la lógica para llamar a la API de tu Panel IPTV y cambiar la contraseña real
+            // usando configPanel.url, configPanel.usuario, configPanel.contrasena
+        }
+      } catch (err) {
+        console.error("Error al generar demo:", err);
+        textoParaEnviar = config.mensajes.sinCuentas;
       }
-
-      return res.json({
-        success: true,
-        accion: "actualizar_demo",
-        textoParaEnviar,
-        avisoAdmin,
-        idCuenta: resultado.id,
-        nuevaContrasena: resultado.contrasena,
-        nuevoContador: resultado.nuevoContador
-      });
+    } 
+    // 2. Detectar si pide PRECIOS
+    else if (mensajeUsuario === "2" || mensajeUsuario.toLowerCase().includes("precio")) {
+      const alias = configPanel.aliasMercaPago || "alias.no.configurado";
+      const precio = configPanel.precioMes || "$2,500 ARS";
+      textoParaEnviar = \`*Nuestros Planes:*\\n\` +
+                        \`- 1 Mes: \${precio}\\n\\n\` +
+                        \`Para pagar, transfiere al Alias: *\${alias}* y envíame el comprobante.\`;
+    }
+    // 3. Otros mensajes
+    else {
+      textoParaEnviar = \`Bienvenido al sistema automatizado IPTV.\\n\` +
+                        \`Escribe *1* para pedir una Demo.\\n\` +
+                        \`Escribe *2* para ver Precios.\`;
     }
 
-    // 3. Caso: Menú principal (Bienvenida)
-    if (textNormalized === "hola" || textNormalized === "menu" || textNormalized === "menú" || textNormalized === "inicio") {
-      const menuMsg = \`👋 ¡Hola! Te doy la bienvenida a nuestro servicio de *\${configuracion.panel_name || "IPTV Premium"}* 📺.\\n\\nElige una opción enviando el número correspondiente:\\n\\n1️⃣ *Generar demo gratuita* (prueba de 2 horas)\\n2️⃣ *Ver precios y datos de pago* (planes mensuales)\\n3️⃣ *Recibir guías de instalación* (Downloader / Smart TV)\\n\\n_Escribe tu duda y te ayudaré con gusto._\`;
-      
-      return res.json({
-        success: true,
-        accion: "enviar_menu",
-        textoParaEnviar: menuMsg
-      });
-    }
-
-    // 4. Caso: Guías de instalación
-    if (textNormalized === "3" || textNormalized.includes("guia") || textNormalized.includes("guía")) {
-      const guiasMsg = \`🛠️ *Guías de Instalación y Soporte* ⚙️\\n\\nInstala nuestro servicio IPTV en cualquier dispositivo de forma simple:\\n\\n🔥 *Fire TV Stick / TV Box:* \\n1. Descarga la app *Downloader* desde la tienda de Amazon.\\n2. Ingresa el código Downloader: \\\`\${config.downloaderCode || "82541"}\\\` para bajar la app oficial.\\n\\n📺 *Smart TV (Samsung/LG):*\\nDescarga la app *Smartters Player Lite* o *ibo Player* desde la tienda oficial.\\n\\n🌐 *Manual web de instalación:* ${config.installGuideUrl}\`;
-      
-      return res.json({
-        success: true,
-        accion: "enviar_guias",
-        textoParaEnviar: guiasMsg
-      });
-    }
-
-    // 5. Caso no reconocido / AI
-    const fallbackMsg = \`🤖 *[Soporte AI]*\\n\\nGracias por tu consulta sobre: "\${mensajeUsuario}".\\n\\nNuestros servicios IPTV son 100% compatibles con Smart TVs (Samsung/LG), Fire Stick, TV Box, celulares y PCs. Ofrecemos más de 10,000 canales en vivo, incluyendo deportes premium en vivo, ligas locales, series y películas.\\n\\nEscribe *menu* para ver las opciones automáticas de Demo Gratuita (1) o Datos de Pago (2).\`;
-
-    return res.json({
+    // Retornamos el mensaje para que Cloudwapi o el enviador lo despache a WhatsApp
+    return res.status(200).json({
       success: true,
-      accion: "enviar_no_reconocido",
-      textoParaEnviar: fallbackMsg
+      telefono: telefono,
+      textoParaEnviar: textoParaEnviar
     });
 
-  } catch (err) {
-    console.error("❌ Error en webhook:", err);
-    return res.status(500).json({ success: false, error: "Error procesando petición" });
+  } catch (error) {
+    console.error("Error en el webhook:", error);
+    return res.status(500).json({ 
+      success: false, 
+      textoParaEnviar: config.mensajes.errorGenerico 
+    });
   }
 });
 
-// Arrancar el servidor
-const PORT = configuracion.port;
+const PORT = config.puerto;
 app.listen(PORT, () => {
   console.log(\`🚀 Servidor de Webhook IPTV corriendo en puerto \${PORT}\`);
   console.log(\`📡 Endpoint listo en: http://localhost:\${PORT}/webhook-bot\`);
@@ -530,17 +577,24 @@ app.listen(PORT, () => {
   const packageJsonCode = `{
   "name": "iptv-bot-v2",
   "version": "2.0.0",
-  "description": "Bot automático para la venta y gestión de servicios IPTV por WhatsApp utilizando Express, Make y Cloudwapi",
+  "description": "Bot automático para la venta y gestión de servicios IPTV por WhatsApp utilizando Express y Supabase",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5"
   },
   "author": "Gustavo Abettiol",
   "license": "MIT"
 }`;
+
+  // .env.example
+  const envExampleCode = `PORT=3000
+SUPABASE_URL=https://tu-proyecto.supabase.co
+SUPABASE_ANON_KEY=TU_CLAVE_ANONIMA`;
 
   return (
     <div className="min-h-screen bg-[#F0F2F5] text-gray-800 font-sans antialiased pb-12 flex flex-col">
@@ -548,8 +602,19 @@ app.listen(PORT, () => {
       <header className="bg-[#075E54] text-white shadow-lg border-b border-[#054c44] sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-emerald-500 rounded-xl shadow-inner text-white animate-pulse">
-              <Bot size={28} />
+            <div className="relative w-12 h-12 rounded-xl overflow-hidden shadow-inner border border-emerald-500/30 animate-pulse bg-emerald-900/20 flex items-center justify-center">
+              <Image 
+                src="/logo.png" 
+                alt="Bot Logo" 
+                fill
+                className="object-cover"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  // Fallback visual en caso de que la imagen no se haya subido aún
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+              <span className="text-[10px] text-emerald-400 font-mono text-center absolute -z-10">Subir<br/>logo.png</span>
             </div>
             <div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Bot IPTV Auto-Venta</h1>
@@ -1440,16 +1505,43 @@ app.listen(PORT, () => {
                   </div>
                 </div>
 
-                {/* Explicación de instalación */}
-                <div className="p-4 bg-slate-50 border border-gray-200 rounded-2xl mb-6">
-                  <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2">Pasos para arrancar el bot en tu PC o servidor:</h4>
-                  <ol className="text-xs text-gray-600 space-y-1.5 list-decimal list-inside leading-relaxed">
-                    <li>Crea una carpeta vacía en tu computadora llamada <code className="bg-gray-200 px-1 py-0.5 rounded text-pink-600 font-mono">iptv-bot</code>.</li>
-                    <li>Crea los 4 archivos mostrados abajo copiando sus contenidos.</li>
-                    <li>Instala las dependencias ejecutando en tu consola: <code className="bg-gray-200 px-1 py-0.5 rounded text-pink-600 font-mono">npm install</code>.</li>
-                    <li>Inicia el bot corriendo el comando: <code className="bg-gray-200 px-1 py-0.5 rounded text-pink-600 font-mono">node index.js</code>.</li>
-                    <li>Escanea el código QR que se imprimirá en tu consola con el celular que recibirá las ventas de IPTV.</li>
-                  </ol>
+                {/* Explicación de despliegue en Render y Make */}
+                <div className="p-4 bg-slate-50 border border-gray-200 rounded-2xl mb-6 flex flex-col gap-4">
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2">1. Despliegue en Render.com:</h4>
+                    <ol className="text-xs text-gray-600 space-y-1.5 list-decimal list-inside leading-relaxed">
+                      <li>Sube estos 4 archivos a un repositorio en GitHub.</li>
+                      <li>En Render.com, crea un nuevo <strong>Web Service</strong> conectado a tu repositorio.</li>
+                      <li>Configura el comando de inicio (Start Command) como: <code className="bg-gray-200 px-1 py-0.5 rounded text-pink-600 font-mono">node index.js</code>.</li>
+                      <li>Render asignará un puerto automáticamente (Express lo detectará mediante <code className="bg-gray-200 px-1 py-0.5 rounded text-pink-600 font-mono">process.env.PORT</code>).</li>
+                      <li>Una vez desplegado, copia la URL que te da Render (ej. <code className="bg-gray-200 px-1 py-0.5 rounded text-emerald-600 font-mono">https://tu-app.onrender.com</code>).</li>
+                    </ol>
+                  </div>
+                  <div className="pt-3 border-t border-gray-200">
+                    <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2">2. Conexión con Make y Cloudwapi:</h4>
+                    <ol className="text-xs text-gray-600 space-y-1.5 list-decimal list-inside leading-relaxed">
+                      <li>En Cloudwapi, configura tu Webhook para que apunte a Make (Integromat).</li>
+                      <li>En Make, crea un módulo <strong>HTTP Make a Request</strong>.</li>
+                      <li>Pega la URL de tu Render apuntando al endpoint: <code className="bg-gray-200 px-1 py-0.5 rounded text-emerald-600 font-mono">https://tu-app.onrender.com/webhook-bot</code>.</li>
+                      <li>Configura el método HTTP como <strong>POST</strong> y envía el <code>mensajeUsuario</code>, <code>telefono</code> y los datos de Google Sheets en formato JSON.</li>
+                      <li>Captura la respuesta y usa un módulo de Cloudwapi para enviar el mensaje devuelto (<code>textoParaEnviar</code>) por WhatsApp.</li>
+                    </ol>
+                  </div>
+                  <div className="pt-3 border-t border-gray-200">
+                    <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2">3. Configuración de Supabase:</h4>
+                    <p className="text-xs text-gray-600 mb-2">Crea un proyecto en Supabase con dos tablas separadas:</p>
+                    <ul className="text-xs text-gray-600 space-y-1.5 list-disc list-inside leading-relaxed mb-3">
+                      <li><strong>Tabla "cuentas_demo":</strong> Crea las columnas <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">id</code>, <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">usuario</code>, <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">contrasena</code>, y <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">contador_usos</code>.<br/>Agrega tus 2 cuentas fijas (Demo1 y Demo2) con sus contraseñas y contador en 0.</li>
+                      <li><strong>Tabla "configuracion":</strong> Crea las columnas <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">variable</code> y <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">valor</code>.<br/>Agrega filas para: url_panel, usuario_panel, contrasena_panel, alias_merca_pago, precio_mes, etc.</li>
+                    </ul>
+                    <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2 mt-4">4. Despliegue (Deploy) en Render o Railway:</h4>
+                    <ol className="text-xs text-gray-600 space-y-1.5 list-decimal list-inside leading-relaxed">
+                      <li>Crea una nueva Web Service.</li>
+                      <li>Sube estos archivos y configura el "Start Command" como <code>npm start</code>.</li>
+                      <li>Agrega las variables de entorno en la plataforma: <code>SUPABASE_URL</code> y <code>SUPABASE_ANON_KEY</code>.</li>
+                      <li>Configura tu Cloudwapi o bot para que envíe el Webhook POST a la URL de tu servicio, con la ruta <code>/webhook-bot</code> enviando <code>telefono</code> y <code>mensajeUsuario</code>.</li>
+                    </ol>
+                  </div>
                 </div>
 
                 {/* Grid de Archivos del Proyecto */}
@@ -1518,7 +1610,7 @@ app.listen(PORT, () => {
                     <div className="bg-slate-100 px-4 py-2.5 border-b border-gray-200 flex justify-between items-center">
                       <div className="flex items-center gap-2">
                         <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                        <span className="text-xs font-bold font-mono text-gray-700">index.js (Lógica principal Baileys)</span>
+                        <span className="text-xs font-bold font-mono text-gray-700">index.js (Servidor Express para Webhook)</span>
                       </div>
                       <button
                         onClick={() => handleCopyCode("index.js", indexJsCode)}
@@ -1568,6 +1660,35 @@ app.listen(PORT, () => {
                     </div>
                     <pre className="p-4 bg-slate-900 text-slate-100 font-mono text-[11px] sm:text-xs overflow-x-auto leading-relaxed max-h-[250px]">
                       {packageJsonCode}
+                    </pre>
+                  </div>
+
+                  {/* .env.example */}
+                  <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                    <div className="bg-slate-100 px-4 py-2.5 border-b border-gray-200 flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+                        <span className="text-xs font-bold font-mono text-gray-700">.env</span>
+                      </div>
+                      <button
+                        onClick={() => handleCopyCode(".env", envExampleCode)}
+                        className="text-xs font-semibold text-[#128C7E] hover:text-[#0b6359] flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-white transition cursor-pointer"
+                      >
+                        {copiedFile === ".env" ? (
+                          <>
+                            <Check size={14} className="text-green-600" />
+                            ¡Copiado!
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={14} />
+                            Copiar Código
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <pre className="p-4 bg-slate-900 text-slate-100 font-mono text-[11px] sm:text-xs overflow-x-auto leading-relaxed max-h-[250px]">
+                      {envExampleCode}
                     </pre>
                   </div>
 

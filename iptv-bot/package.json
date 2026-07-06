@@ -1,0 +1,14 @@
+{
+  "name": "iptv-bot-v2",
+  "version": "2.0.0",
+  "description": "Bot automático para la venta y gestión de servicios IPTV por WhatsApp utilizando Express, Make y Cloudwapi",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "author": "Gustavo Abettiol",
+  "license": "MIT"
+}
