@@ -28,7 +28,9 @@ import {
   UserCheck, 
   Download,
   Info,
-  Moon
+  Moon,
+  Lock,
+  Unlock
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -106,6 +108,9 @@ export default function Home() {
   // Estado del Bot de WhatsApp
   const [botStatus, setBotStatus] = useState<"DISCONNECTED" | "SCANNING" | "CONNECTED">("CONNECTED");
   const [activeTab, setActiveTab] = useState<"chat" | "dashboard" | "admin" | "code">("chat");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
   const [chatDarkMode, setChatDarkMode] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [currentClientNumber] = useState("5493764999999");
@@ -650,9 +655,89 @@ SUPABASE_ANON_KEY=TU_CLAVE_ANONIMA`;
                 Conectar
               </button>
             )}
+            
+            <button
+              onClick={() => {
+                if (isAdmin) {
+                  setIsAdmin(false);
+                  setActiveTab("chat");
+                } else {
+                  setShowAdminLogin(true);
+                }
+              }}
+              className={`ml-2 p-1.5 rounded-md transition-colors ${isAdmin ? "bg-emerald-700 hover:bg-emerald-800 text-emerald-100" : "bg-emerald-800/50 hover:bg-emerald-700 text-emerald-200"}`}
+              title={isAdmin ? "Cerrar sesión de Admin" : "Acceso Administrador"}
+            >
+              {isAdmin ? <Unlock size={16} /> : <Lock size={16} />}
+            </button>
           </div>
         </div>
       </header>
+
+      {/* MODAL DE LOGIN ADMIN */}
+      <AnimatePresence>
+        {showAdminLogin && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl"
+            >
+              <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Lock className="text-[#128C7E]" /> Acceso Administrador
+              </h2>
+              <p className="text-sm text-gray-600 mb-4">Ingresa la contraseña para acceder a la configuración y logs del bot. (Contraseña: admin)</p>
+              <input 
+                type="password" 
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (adminPassword === "admin") {
+                      setIsAdmin(true);
+                      setShowAdminLogin(false);
+                      setAdminPassword("");
+                    } else {
+                      alert("Contraseña incorrecta");
+                    }
+                  }
+                }}
+                className="w-full border-gray-300 rounded-lg p-2.5 text-sm mb-4 focus:ring-2 focus:ring-[#128C7E] outline-none border bg-gray-50"
+                placeholder="Contraseña"
+                autoFocus
+              />
+              <div className="flex justify-end gap-3">
+                <button 
+                  onClick={() => { setShowAdminLogin(false); setAdminPassword(""); }}
+                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => {
+                    if (adminPassword === "admin") {
+                      setIsAdmin(true);
+                      setShowAdminLogin(false);
+                      setAdminPassword("");
+                    } else {
+                      alert("Contraseña incorrecta");
+                    }
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#128C7E] hover:bg-[#0b6359] rounded-lg transition shadow-sm"
+                >
+                  Ingresar
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* TABS DE NAVEGACIÓN */}
       <nav className="bg-white border-b border-gray-200 shadow-sm sticky top-[73px] sm:top-[76px] z-30">
@@ -669,44 +754,49 @@ SUPABASE_ANON_KEY=TU_CLAVE_ANONIMA`;
               <MessageSquare size={18} />
               Simulador de Chat
             </button>
-            <button
-              onClick={() => setActiveTab("admin")}
-              className={`flex items-center gap-2 py-4 px-1 border-b-2 text-sm font-medium transition relative whitespace-nowrap cursor-pointer ${
-                activeTab === "admin"
-                  ? "border-[#128C7E] text-[#128C7E]"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <Smartphone size={18} />
-              Bandeja Administrador
-              {adminMessages.filter(m => !m.approved && !m.rejected).length > 0 && (
-                <span className="absolute top-2.5 -right-3.5 bg-red-500 text-white text-[10px] font-bold h-4 w-4 rounded-full flex items-center justify-center animate-bounce">
-                  {adminMessages.filter(m => !m.approved && !m.rejected).length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={`flex items-center gap-2 py-4 px-1 border-b-2 text-sm font-medium transition whitespace-nowrap cursor-pointer ${
-                activeTab === "dashboard"
-                  ? "border-[#128C7E] text-[#128C7E]"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <Settings size={18} />
-              Configuración & Demos
-            </button>
-            <button
-              onClick={() => setActiveTab("code")}
-              className={`flex items-center gap-2 py-4 px-1 border-b-2 text-sm font-medium transition whitespace-nowrap cursor-pointer ${
-                activeTab === "code"
-                  ? "border-[#128C7E] text-[#128C7E]"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <FileCode size={18} />
-              Exportar Código Bot
-            </button>
+            
+            {isAdmin && (
+              <>
+                <button
+                  onClick={() => setActiveTab("admin")}
+                  className={`flex items-center gap-2 py-4 px-1 border-b-2 text-sm font-medium transition relative whitespace-nowrap cursor-pointer ${
+                    activeTab === "admin"
+                      ? "border-[#128C7E] text-[#128C7E]"
+                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }`}
+                >
+                  <Smartphone size={18} />
+                  Bandeja Administrador
+                  {adminMessages.filter(m => !m.approved && !m.rejected).length > 0 && (
+                    <span className="absolute top-2.5 -right-3.5 bg-red-500 text-white text-[10px] font-bold h-4 w-4 rounded-full flex items-center justify-center animate-bounce">
+                      {adminMessages.filter(m => !m.approved && !m.rejected).length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab("dashboard")}
+                  className={`flex items-center gap-2 py-4 px-1 border-b-2 text-sm font-medium transition whitespace-nowrap cursor-pointer ${
+                    activeTab === "dashboard"
+                      ? "border-[#128C7E] text-[#128C7E]"
+                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }`}
+                >
+                  <Settings size={18} />
+                  Configuración & Demos
+                </button>
+                <button
+                  onClick={() => setActiveTab("code")}
+                  className={`flex items-center gap-2 py-4 px-1 border-b-2 text-sm font-medium transition whitespace-nowrap cursor-pointer ${
+                    activeTab === "code"
+                      ? "border-[#128C7E] text-[#128C7E]"
+                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                  }`}
+                >
+                  <FileCode size={18} />
+                  Exportar Código Bot
+                </button>
+              </>
+            )}
           </div>
         </div>
       </nav>
