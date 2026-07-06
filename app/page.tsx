@@ -382,7 +382,13 @@ module.exports = {
 
   // Generar dinámicamente el contenido de demoManager.js
   const demoManagerJsCode = `// demoManager.js
-const { supabase } = require('./configuracion');
+const { createClient } = require('@supabase/supabase-js');
+require('dotenv').config();
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 /**
  * Obtiene la configuración del panel desde Supabase
@@ -390,7 +396,7 @@ const { supabase } = require('./configuracion');
 async function obtenerConfiguracion() {
     const { data, error } = await supabase
         .from('configuracion')
-        .select('variable, valor');
+        .select('Dato, Valor');
 
     if (error) {
         console.error("Error al obtener configuración:", error);
@@ -399,76 +405,46 @@ async function obtenerConfiguracion() {
 
     const configMap = {};
     data.forEach(item => {
-        configMap[item.variable] = item.valor;
+        configMap[item.Dato] = item.Valor;
     });
 
     return {
-        url: configMap['url_panel'],
-        usuario: configMap['usuario_panel'],
-        contrasena: configMap['contrasena_panel'],
         linkPlataforma: configMap['link_plataforma'],
         precioMes: configMap['precio_mes'],
-        aliasMercaPago: configMap['alias_merca_pago']
+        aliasMercaPago: configMap['alias_mercado_pago']
     };
 }
 
 /**
- * Procesa la solicitud de demo conectándose a Supabase.
- * Ordena por contador_usos ascendente, toma la primera.
- * Incrementa contador, si es múltiplo de 3, genera nueva contraseña.
+ * Procesa la solicitud de demo conectándose a Supabase (Tabla DEMO)
  */
 async function procesarRotacionDemo() {
-    // 1. Obtener la cuenta menos usada
-    const { data: cuentas, error: errorSelect } = await supabase
-        .from('cuentas_demo')
+    // 1. Buscamos la cuenta con menos usos de tu tabla DEMO
+    const { data: cuentas, error: errCuenta } = await supabase
+        .from('DEMO')
         .select('*')
         .order('contador_usos', { ascending: true })
         .limit(1);
 
-    if (errorSelect) throw errorSelect;
-    
-    if (!cuentas || cuentas.length === 0) {
-        throw new Error("No hay cuentas disponibles en la base de datos.");
+    if (errCuenta || !cuentas || cuentas.length === 0) {
+        throw new Error("No hay cuentas demo disponibles.");
     }
 
-    const cuentaActual = cuentas[0];
-    const id = cuentaActual.id;
-    const usuario = cuentaActual.usuario;
-    let contrasena = cuentaActual.contrasena;
-    
-    let contadorUsos = parseInt(cuentaActual.contador_usos, 10) || 0;
-    
-    // Incrementar contador
-    const nuevoContador = contadorUsos + 1;
-    let debeActualizarPanel = false;
+    const cuentaSeleccionada = cuentas[0];
+    let nuevoContador = Number(cuentaSeleccionada.contador_usos) + 1;
 
-    // Si el contador es múltiplo de 3, generamos nueva contraseña
-    if (nuevoContador > 0 && nuevoContador % 3 === 0) {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let randomPass = "";
-        for (let i = 0; i < 6; i++) {
-            randomPass += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        contrasena = randomPass;
-        debeActualizarPanel = true;
-    }
+    // 2. Guardamos la actualización usando el "iD"
+    const { error: errUpdate } = await supabase
+        .from('DEMO')
+        .update({ contador_usos: nuevoContador })
+        .eq('iD', cuentaSeleccionada.iD);
 
-    // 2. Actualizar en Supabase
-    const { error: errorUpdate } = await supabase
-        .from('cuentas_demo')
-        .update({ 
-            contador_usos: nuevoContador,
-            contrasena: contrasena
-        })
-        .eq('id', id);
-
-    if (errorUpdate) throw errorUpdate;
+    if (errUpdate) throw errUpdate;
 
     return {
-        usuario,
-        nuevaContrasena: contrasena,
-        nuevoContador,
-        debeActualizarPanel
+        usuario: cuentaSeleccionada.usuario,
+        nuevaContrasena: cuentaSeleccionada.contraseña,
+        nuevoContador
     };
 }
 
@@ -508,7 +484,6 @@ app.post(config.webhookPath, async (req, res) => {
   try {
     const { telefono, mensajeUsuario } = req.body;
 
-    // Validación básica
     if (!telefono || !mensajeUsuario) {
       return res.status(400).json({ error: "Faltan datos requeridos (telefono, mensajeUsuario)" });
     }
@@ -525,17 +500,11 @@ app.post(config.webhookPath, async (req, res) => {
       try {
         const rotacion = await procesarRotacionDemo();
         
-        textoParaEnviar = \`¡Hola! Aquí tienes tu demo generada automáticamente:\\n\\n\` +
-                          \`📺 *App Recomendada*: IPTV Smarters Pro\\n\` +
-                          \`👤 *Usuario*: \${rotacion.usuario}\\n\` +
-                          \`🔑 *Contraseña*: \${rotacion.nuevaContrasena}\\n\\n\` +
+        textoParaEnviar = \`¡Hola! Aquí tienes tu demo generada automáticamente:\n\n\` +
+                          \`📺 *App Recomendada*: IPTV Smarters Pro\n\` +
+                          \`👤 *Usuario*: \${rotacion.usuario}\n\` +
+                          \`🔑 *Contraseña*: \${rotacion.nuevaContrasena}\n\n\` +
                           \`Disfruta del mejor contenido.\`;
-                          
-        if (rotacion.debeActualizarPanel) {
-            console.log(\`⚠️ AVISO: Actualizar en el panel IPTV: Usuario \${rotacion.usuario} - Nueva pass: \${rotacion.nuevaContrasena}\`);
-            // Aquí podrías agregar la lógica para llamar a la API de tu Panel IPTV y cambiar la contraseña real
-            // usando configPanel.url, configPanel.usuario, configPanel.contrasena
-        }
       } catch (err) {
         console.error("Error al generar demo:", err);
         textoParaEnviar = config.mensajes.sinCuentas;
@@ -545,18 +514,17 @@ app.post(config.webhookPath, async (req, res) => {
     else if (mensajeUsuario === "2" || mensajeUsuario.toLowerCase().includes("precio")) {
       const alias = configPanel.aliasMercaPago || "alias.no.configurado";
       const precio = configPanel.precioMes || "$2,500 ARS";
-      textoParaEnviar = \`*Nuestros Planes:*\\n\` +
-                        \`- 1 Mes: \${precio}\\n\\n\` +
+      textoParaEnviar = \`*Nuestros Planes:*\n\` +
+                        \`- 1 Mes: \${precio}\n\n\` +
                         \`Para pagar, transfiere al Alias: *\${alias}* y envíame el comprobante.\`;
     }
     // 3. Otros mensajes
     else {
-      textoParaEnviar = \`Bienvenido al sistema automatizado IPTV.\\n\` +
-                        \`Escribe *1* para pedir una Demo.\\n\` +
+      textoParaEnviar = \`Bienvenido al sistema automatizado IPTV.\n\` +
+                        \`Escribe *1* para pedir una Demo.\n\` +
                         \`Escribe *2* para ver Precios.\`;
     }
 
-    // Retornamos el mensaje para que Cloudwapi o el enviador lo despache a WhatsApp
     return res.status(200).json({
       success: true,
       telefono: telefono,
