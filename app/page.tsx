@@ -349,40 +349,23 @@ export default function Home() {
 
   // Generar dinámicamente el contenido de configuracion.js
   const configuracionJsCode = `// configuracion.js
-// Archivo de parámetros del bot para paneles, precios y administrador
+// Archivo de parámetros estáticos para el bot en producción (Express)
 
 module.exports = {
-  // Número de WhatsApp del administrador (con código de país, sin el signo +)
-  admin_number: "${config.adminNumber}",
+  // Puerto local del servidor Express
+  port: process.env.PORT || 3000,
 
   // Nombre comercial de tu servicio IPTV
-  panel_name: "${config.panelName}",
-
-  // Tarifas configuradas de tus planes
-  price_1_month: "${config.price1Month}",
-  price_3_months: "${config.price3Months}",
-
-  // Alias o CBU para recibir los pagos
-  payment_alias: "${config.paymentAlias}",
-
-  // Parámetros de instalación rápida
-  downloader_code: "${config.downloaderCode}",
-  install_guide_url: "${config.installGuideUrl}",
-
-  // Prefijo para identificar las cuentas demo automáticas en tu panel
-  demo_prefix: "${config.demoPrefix}",
-
-  // Si está activado, procesa preguntas libres utilizando la API de Inteligencia Artificial (Gemini)
-  ai_support_enabled: ${config.aiSupportEnabled}
+  panel_name: "${config.panelName}"
 };`;
 
   // Generar dinámicamente el contenido de demoManager.js
   const demoManagerJsCode = `// demoManager.js
-// Módulo para la generación de contraseñas rotativas y control de demos
+// Módulo para procesar la rotación de contraseñas de las cuentas demo fijas
 
-const configuracion = require("./configuracion");
-
-// Generador de contraseña aleatoria de longitud fija
+/**
+ * Generador de contraseña aleatoria de 6 caracteres
+ */
 function generateRandomPassword(length = 6) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let password = "";
@@ -392,317 +375,168 @@ function generateRandomPassword(length = 6) {
   return password;
 }
 
-// Genera datos simulados que puedes integrar mediante la API de tu Panel IPTV
-function generateDemo() {
-  const demoUser = \`\${configuracion.demo_prefix}\${Math.floor(1000 + Math.random() * 9000)}\`;
-  const demoPass = generateRandomPassword();
+/**
+ * Procesa la rotación de usos de la cuenta seleccionada.
+ * Si el nuevo contador es múltiplo de 3 (3, 6, 9...), genera una nueva contraseña
+ * aleatoria de 6 caracteres y marca debeCambiarEnPanel como true.
+ */
+function procesarRotacionDemo(cuentaActual) {
+  if (!cuentaActual) {
+    cuentaActual = { id: 1, usuario: "demo_default", contrasena: "123456", Contador_Usos: 0 };
+  }
+  
+  const id = cuentaActual.id || "";
+  const usuario = cuentaActual.usuario || "";
+  let contrasena = cuentaActual.contrasena || cuentaActual.Contrasena_Actual || "";
+  
+  // Extraer el contador con soporte para ambas nomenclaturas (Sheets y locales)
+  const contadorRaw = cuentaActual.Contador_Usos !== undefined 
+    ? cuentaActual.Contador_Usos 
+    : (cuentaActual.contador_usos !== undefined ? cuentaActual.contador_usos : 0);
+    
+  let contadorUsos = parseInt(String(contadorRaw), 10);
+  if (isNaN(contadorUsos)) {
+    contadorUsos = 0;
+  }
+  
+  let debeCambiarEnPanel = false;
+  
+  // Incrementar Contador_Usos por 1
+  const nuevoContador = contadorUsos + 1;
+  
+  // Cada vez que es múltiplo de 3 (3, 6, 9...), generamos nueva contraseña
+  if (nuevoContador > 0 && nuevoContador % 3 === 0) {
+    contrasena = generateRandomPassword();
+    debeCambiarEnPanel = true;
+  }
   
   return {
-    usuario: demoUser,
-    contrasena: demoPass,
-    url: configuracion.install_guide_url,
-    downloader_code: configuracion.downloader_code,
-    creadoEn: new Date().toISOString()
+    id,
+    usuario,
+    contrasena,
+    nuevoContador,
+    debeCambiarEnPanel
   };
 }
 
 module.exports = {
-  generateDemo,
+  procesarRotacionDemo,
   generateRandomPassword
 };`;
 
   // Generar dinámicamente el contenido de index.js
   const indexJsCode = `// index.js
-// Código principal para la conexión con Baileys WhatsApp API y automatización
+// Servidor principal Express.js para el webhook de Make (Integromat) + Cloudwapi
 
-const { 
-  makeWASocket, 
-  DisconnectReason, 
-  fetchLatestBaileysVersion, 
-  delay,
-  initAuthCreds,
-  BufferJSON,
-  proto
-} = require("@whiskeysockets/baileys");
-const pino = require("pino");
-const fs = require("fs");
-const path = require("path");
-
+const express = require("express");
 const configuracion = require("./configuracion");
 const demoManager = require("./demoManager");
 
-// Control de memoria y listeners máximos para reconexión infinita
-require("events").EventEmitter.defaultMaxListeners = 50;
+const app = express();
+app.use(express.json());
 
-// Función personalizada useMultiFileAuthState para corregir el error de nombres de archivo con dos puntos (:) en Windows (linked devices)
-async function useMultiFileAuthStateCustom(folder) {
-  const writeData = (data, file) => {
-    const safeFile = file.replace(/:/g, '-'); // Reemplazo de ":" por "-" para compatibilidad con Windows
-    return fs.promises.writeFile(path.join(folder, safeFile), JSON.stringify(data, BufferJSON.replacer));
-  };
+// Endpoint del webhook para recibir peticiones desde Make (Integromat)
+app.post("/webhook-bot", (req, res) => {
+  try {
+    const { telefono, mensajeUsuario, cuentaSeleccionada, aliasBrubank } = req.body;
 
-  const readData = async (file) => {
-    try {
-      const safeFile = file.replace(/:/g, '-');
-      const data = await fs.promises.readFile(path.join(folder, safeFile), { encoding: 'utf-8' });
-      return JSON.parse(data, BufferJSON.reviver);
-    } catch (error) {
-      return null;
+    if (!mensajeUsuario) {
+      return res.status(400).json({ success: false, error: "mensajeUsuario es requerido" });
     }
-  };
 
-  const removeData = async (file) => {
-    try {
-      const safeFile = file.replace(/:/g, '-');
-      await fs.promises.unlink(path.join(folder, safeFile));
-    } catch (error) {}
-  };
+    const textNormalized = String(mensajeUsuario).toLowerCase().trim();
 
-  const folderInfo = await fs.promises.stat(folder).catch(() => null);
-  if (!folderInfo) {
-    await fs.promises.mkdir(folder, { recursive: true });
+    // 1. Caso: Precios o Pago ("precio", "pagar", u opción "2")
+    if (textNormalized.includes("precio") || textNormalized.includes("pagar") || textNormalized === "2") {
+      const currentAlias = aliasBrubank || "${config.paymentAlias}";
+      const preciosMsg = \`💰 *Planes y Precios del Servicio* 📺\\n\\nDisfruta del mejor entretenimiento sin interrupciones:\\n\\n⭐ *1 Mes Premium:* \${config.price1Month || "$3500 ARS"}\\n⭐ *3 Meses Premium:* \${config.price3Months || "$9000 ARS"} (¡Con descuento!)\\n\\n📱 *Método de Pago (Mercado Pago / Transferencia):*\\n👉 *Alias:* \\\`\${currentAlias}\\\`\\n👉 *Titular:* IPTV Ventas S.A.\\n\\n⚠️ *IMPORTANTE:* Una vez realizado el pago, envía la captura del comprobante por este chat para que activemos tus accesos premium automáticamente.\`;
+      
+      return res.json({
+        success: true,
+        accion: "enviar_precios",
+        textoParaEnviar: preciosMsg
+      });
+    }
+
+    // 2. Caso: Generar Demo ("demo" u opción "1")
+    if (textNormalized.includes("demo") || textNormalized === "1") {
+      // Rotar y procesar la cuenta provista por Google Sheets desde Make
+      const cuenta = cuentaSeleccionada || { id: 1, usuario: "demo_default", contrasena: "123456", Contador_Usos: 0 };
+      const resultado = demoManager.procesarRotacionDemo(cuenta);
+
+      const textoParaEnviar = \`📺 *¡Demo gratuita generada con éxito!* 🎉\\n\\nAquí tienes tus credenciales de acceso válidas por *2 horas*:\\n\\n👤 *Usuario:* \\\`\${resultado.usuario}\\\`\\n🔑 *Contraseña:* \\\`\${resultado.contrasena}\\\`\\n\\n📱 *Guía de instalación:* ${config.installGuideUrl}\\n🔢 *Código Downloader:* \${config.downloaderCode || "82541"}\\n\\n_Recuerda que solo se permite una demo por número de celular para evitar abusos._\`;
+
+      let avisoAdmin = "";
+      if (resultado.debeCambiarEnPanel) {
+        avisoAdmin = \`⚠️ *AVISO ADMINISTRADOR:* La cuenta demo con ID \${resultado.id} (Usuario: \${resultado.usuario}) ha alcanzado un múltiplo de 3 usos. Se ha generado una nueva contraseña: *\${resultado.contrasena}*. Por favor, actualízala en el panel IPTV.\`;
+      }
+
+      return res.json({
+        success: true,
+        accion: "actualizar_demo",
+        textoParaEnviar,
+        avisoAdmin,
+        idCuenta: resultado.id,
+        nuevaContrasena: resultado.contrasena,
+        nuevoContador: resultado.nuevoContador
+      });
+    }
+
+    // 3. Caso: Menú principal (Bienvenida)
+    if (textNormalized === "hola" || textNormalized === "menu" || textNormalized === "menú" || textNormalized === "inicio") {
+      const menuMsg = \`👋 ¡Hola! Te doy la bienvenida a nuestro servicio de *\${configuracion.panel_name || "IPTV Premium"}* 📺.\\n\\nElige una opción enviando el número correspondiente:\\n\\n1️⃣ *Generar demo gratuita* (prueba de 2 horas)\\n2️⃣ *Ver precios y datos de pago* (planes mensuales)\\n3️⃣ *Recibir guías de instalación* (Downloader / Smart TV)\\n\\n_Escribe tu duda y te ayudaré con gusto._\`;
+      
+      return res.json({
+        success: true,
+        accion: "enviar_menu",
+        textoParaEnviar: menuMsg
+      });
+    }
+
+    // 4. Caso: Guías de instalación
+    if (textNormalized === "3" || textNormalized.includes("guia") || textNormalized.includes("guía")) {
+      const guiasMsg = \`🛠️ *Guías de Instalación y Soporte* ⚙️\\n\\nInstala nuestro servicio IPTV en cualquier dispositivo de forma simple:\\n\\n🔥 *Fire TV Stick / TV Box:* \\n1. Descarga la app *Downloader* desde la tienda de Amazon.\\n2. Ingresa el código Downloader: \\\`\${config.downloaderCode || "82541"}\\\` para bajar la app oficial.\\n\\n📺 *Smart TV (Samsung/LG):*\\nDescarga la app *Smartters Player Lite* o *ibo Player* desde la tienda oficial.\\n\\n🌐 *Manual web de instalación:* ${config.installGuideUrl}\`;
+      
+      return res.json({
+        success: true,
+        accion: "enviar_guias",
+        textoParaEnviar: guiasMsg
+      });
+    }
+
+    // 5. Caso no reconocido / AI
+    const fallbackMsg = \`🤖 *[Soporte AI]*\\n\\nGracias por tu consulta sobre: "\${mensajeUsuario}".\\n\\nNuestros servicios IPTV son 100% compatibles con Smart TVs (Samsung/LG), Fire Stick, TV Box, celulares y PCs. Ofrecemos más de 10,000 canales en vivo, incluyendo deportes premium en vivo, ligas locales, series y películas.\\n\\nEscribe *menu* para ver las opciones automáticas de Demo Gratuita (1) o Datos de Pago (2).\`;
+
+    return res.json({
+      success: true,
+      accion: "enviar_no_reconocido",
+      textoParaEnviar: fallbackMsg
+    });
+
+  } catch (err) {
+    console.error("❌ Error en webhook:", err);
+    return res.status(500).json({ success: false, error: "Error procesando petición" });
   }
+});
 
-  const creds = await readData('creds.json') || initAuthCreds();
-
-  return {
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const data = {};
-          await Promise.all(
-            ids.map(async (id) => {
-              let value = await readData(\`\${type}-\${id}.json\`);
-              if (type === 'app-state-sync-key' && value) {
-                value = proto.Message.AppStateSyncKeyData.fromObject(value);
-              }
-              data[id] = value;
-            })
-          );
-          return data;
-        },
-        set: async (data) => {
-          const tasks = [];
-          for (const category in data) {
-            for (const id in data[category]) {
-              const value = data[category][id];
-              const file = \`\${category}-\${id}.json\`;
-              tasks.push(value ? writeData(value, file) : removeData(file));
-            }
-          }
-          await Promise.all(tasks);
-        }
-      }
-    },
-    saveCreds: () => {
-      return writeData(creds, 'creds.json');
-    }
-  };
-}
-
-async function conectarBot() {
-  console.log("🚀 Iniciando Bot IPTV Auto-Venta...");
-  
-  // Guardar credenciales de sesión utilizando la versión personalizada compatible con Windows
-  const { state, saveCreds } = await useMultiFileAuthStateCustom("auth_info");
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
-    version,
-    printQRInTerminal: true, // Muestra el QR en la consola para escanear
-    auth: state,
-    logger: pino({ level: "silent" })
-  });
-
-  // Guardar credenciales de forma reactiva ante cambios
-  sock.ev.on("creds.update", saveCreds);
-
-  // Gestión de reconexión infinita
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      console.log("👉 Escanea el código QR impreso abajo con tu celular que usará el bot:");
-    }
-
-    if (connection === "close") {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const debeReconectarse = statusCode !== DisconnectReason.loggedOut;
-      const errorDetail = lastDisconnect?.error || "Desconexión manual";
-      
-      console.log(\`⚠️ Conexión cerrada. Código Estado: \${statusCode}. Detalle: \${errorDetail}. Reconectando en 5s...\`);
-      
-      // Limpiar listeners antes de reconectar para evitar fugas de memoria
-      sock.ev.removeAllListeners();
-      
-      if (debeReconectarse) {
-        setTimeout(conectarBot, 5000);
-      } else {
-        console.log("❌ Sesión cerrada permanentemente. Borra la carpeta 'auth_info' y vuelve a iniciar para escanear nuevo QR.");
-      }
-    } else if (connection === "open") {
-      console.log("✅ ¡Bot IPTV conectado exitosamente a WhatsApp! Listo para recibir mensajes.");
-    }
-  });
-
-  // Escucha universal de mensajes entrantes
-  sock.ev.on("messages.upsert", async (m) => {
-    try {
-      if (m.type !== "notify") return;
-      const msg = m.messages[0];
-      if (!msg.message || msg.key.fromMe) return;
-
-      const from = msg.key.remoteJid;
-      const clientNumber = from.split("@")[0];
-
-      // Marcar mensaje leído de inmediato (doble check azul) de forma segura
-      try {
-        await sock.readMessages([msg.key]);
-      } catch (readErr) {
-        console.log("⚠️ No se pudo marcar como leído:", readErr.message);
-      }
-
-      // Extraer texto o descripción si es imagen
-      const type = Object.keys(msg.message)[0];
-      let bodyText = "";
-
-      if (type === "conversation") {
-        bodyText = msg.message.conversation;
-      } else if (type === "extendedTextMessage") {
-        bodyText = msg.message.extendedTextMessage.text;
-      } else if (type === "imageMessage") {
-        bodyText = msg.message.imageMessage.caption || "";
-      }
-
-      const normalizedText = bodyText.trim().toLowerCase();
-      console.log(\`💬 Mensaje de [\${clientNumber}]: \${bodyText}\`);
-
-      // 1. Reenvío automático de imágenes/comprobantes al administrador
-      if (type === "imageMessage") {
-        await sock.sendMessage(from, { 
-          text: "✅ *¡Comprobante de pago recibido!* 🧾\\n\\nLo he reenviado a nuestro administrador para su verificación inmediata. Te avisaré por aquí en cuanto se valide tu pago para enviarte tus credenciales de acceso premium." 
-        });
-
-        // Reenviar al número del administrador configurado
-        const adminJid = \`\${configuracion.admin_number}@s.whatsapp.net\`;
-        
-        // Reenvía el mismo mensaje de imagen al administrador con los detalles
-        await sock.sendMessage(adminJid, {
-          forward: msg,
-          contextInfo: {
-            isForwarded: true
-          }
-        });
-        
-        await sock.sendMessage(adminJid, { 
-          text: \`🔔 *IPTV BOT:* El cliente Gus (\${clientNumber}) ha enviado este comprobante. Valídalo y respóndele por este chat para activar sus accesos premium o denegarlo.\` 
-        });
-        return;
-      }
-
-      // 2. Respuestas automáticas según palabras clave y opciones del menú
-      if (normalizedText === "hola" || normalizedText === "menu" || normalizedText === "menú" || normalizedText === "inicio") {
-        const menu = \`👋 ¡Hola! Te doy la bienvenida a nuestro servicio de *IPTV Premium* 📺.
-
-Elige una opción enviando el número correspondiente:
-
-1️⃣ *Generar demo gratuita* (prueba de 2 horas)
-2️⃣ *Ver precios y datos de pago* (planes mensuales)
-3️⃣ *Recibir guías de instalación* (Downloader / Smart TV)
-
-_Escribe tu duda y te ayudaré con gusto._\`;
-
-        await sock.sendMessage(from, { text: menu });
-        
-      } else if (normalizedText === "1") {
-        // Opción 1: Generar demo con credenciales rotativas automáticas
-        const demo = demoManager.generateDemo();
-        
-        const respuestaDemo = \`📺 *¡Demo gratuita generada con éxito!* 🎉
-
-Aquí tienes tus credenciales de acceso válidas por *2 horas*:
-
-👤 *Usuario:* \`\${demo.usuario}\`
-🔑 *Contraseña:* \`\${demo.contrasena}\`
-
-📱 *Guía de instalación:* \${demo.url}
-🔢 *Código Downloader:* \`\${demo.downloader_code}\`
-
-_Recuerda que solo se permite una demo por número de celular para evitar abusos._\`;
-
-        await sock.sendMessage(from, { text: respuestaDemo });
-        
-      } else if (normalizedText === "2") {
-        // Opción 2: Mostrar precios y datos de pago
-        const respuestaPrecios = \`💰 *Planes y Precios del Servicio* 📺
-
-Disfruta del mejor entretenimiento sin interrupciones:
-
-⭐ *1 Mes Premium:* \`\${configuracion.price_1_month}\`
-⭐ *3 Meses Premium:* \`\${configuracion.price_3_months}\` (¡Con descuento!)
-
-📱 *Método de Pago (Mercado Pago / Transferencia):*
-👉 *Alias:* \`\${configuracion.payment_alias}\`
-👉 *Titular:* IPTV Ventas S.A.
-
-⚠️ *IMPORTANTE:* Una vez realizado el pago, envía la captura del comprobante por este chat para que activemos tus accesos premium automáticamente.\`;
-
-        await sock.sendMessage(from, { text: respuestaPrecios });
-        
-      } else if (normalizedText === "3") {
-        // Opción 3: Enviar guías de instalación
-        const respuestaGuias = \`🛠️ *Guías de Instalación y Soporte* ⚙️
-
-Instala nuestro servicio IPTV en cualquier dispositivo de forma simple:
-
-🔥 *Fire TV Stick / TV Box:* 
-1. Descarga la app *Downloader* desde la tienda de Amazon.
-2. Ingresa el código Downloader: \`\${configuracion.downloader_code}\` para bajar la app oficial.
-
-📺 *Smart TV (Samsung/LG):*
-Descarga la app *Smartters Player Lite* o *ibo Player* desde la tienda oficial.
-
-🌐 *Manual web de instalación:* \${configuracion.install_guide_url}\`;
-
-        await sock.sendMessage(from, { text: respuestaGuias });
-        
-      } else {
-        // Si el cliente escribe otra cosa e Inteligencia Artificial está activada
-        if (configuracion.ai_support_enabled) {
-          // Integrar llamada a la API de tu IA o responder mensaje de cortesía inteligente
-          console.log("Procesando consulta con Inteligencia Artificial...");
-          await sock.sendMessage(from, { 
-            text: \`🤖 *[Asistente AI]* Gracias por tu consulta: "\${bodyText}". Estamos analizando tu consulta para darte soporte técnico personalizado. Si deseas ver opciones, escribe *menu*.\` 
-          });
-        } else {
-          await sock.sendMessage(from, { 
-            text: "❌ Opción no reconocida. Escribe *menu* para ver las opciones disponibles." 
-          });
-        }
-      }
-    } catch (msgErr) {
-      console.error("❌ Error grave al procesar el mensaje:", msgErr);
-    }
-  });
-}
-
-conectarBot().catch(err => console.error("❌ Error grave en ejecución:", err));`;
+// Arrancar el servidor
+const PORT = configuracion.port;
+app.listen(PORT, () => {
+  console.log(\`🚀 Servidor de Webhook IPTV corriendo en puerto \${PORT}\`);
+  console.log(\`📡 Endpoint listo en: http://localhost:\${PORT}/webhook-bot\`);
+});`;
 
   // package.json exportable
   const packageJsonCode = `{
   "name": "iptv-bot-v2",
   "version": "2.0.0",
-  "description": "Bot automático para la venta y gestión de servicios IPTV por WhatsApp",
+  "description": "Bot automático para la venta y gestión de servicios IPTV por WhatsApp utilizando Express, Make y Cloudwapi",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.5.0",
-    "axios": "^1.6.8",
-    "pino": "^8.14.1",
-    "qrcode-terminal": "^0.12.0"
+    "express": "^4.19.2"
   },
   "author": "Gustavo Abettiol",
   "license": "MIT"
