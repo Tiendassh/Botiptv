@@ -13,29 +13,27 @@ export async function POST(req: NextRequest) {
 
     const textNormalized = String(mensajeUsuario).toLowerCase().trim();
 
-    // 1. Caso: Precios o Pago
-    if (textNormalized.includes("precio") || textNormalized.includes("pagar") || textNormalized === "2") {
-      const currentAlias = aliasBrubank || "iptv.venta.mp";
-      const preciosMsg = `💰 *Planes y Precios del Servicio* 📺\n\nDisfruta del mejor entretenimiento sin interrupciones:\n\n⭐ *1 Mes Premium:* $3500 ARS\n⭐ *3 Meses Premium:* $9000 ARS (¡Con descuento!)\n\n📱 *Método de Pago (Mercado Pago / Transferencia):*\n👉 *Alias:* \`${currentAlias}\`\n👉 *Titular:* IPTV Ventas S.A.\n\n⚠️ *IMPORTANTE:* Una vez realizado el pago, envía la captura del comprobante por este chat para que activemos tus accesos premium automáticamente.`;
+    // 1. Caso: Menú principal
+    if (textNormalized === "hola" || textNormalized === "menu" || textNormalized === "menú" || textNormalized === "inicio") {
+      const menuMsg = `👋 ¡Hola! Te doy la bienvenida a nuestro servicio de *IPTV Premium* 📺.\n\nElige una opción enviando el número correspondiente:\n\n1️⃣ *Pedir Demo Gratuita* (prueba de 2 horas)\n2️⃣ *Contratar 1 Mes* ($3,500 ARS)\n3️⃣ *Contratar 3 Meses* ($9,000 ARS - ¡Descuento!)\n4️⃣ *Ya efectué el pago* (Mandar comprobante / Crear usuario final)\n5️⃣ *Guías de instalación y soporte*\n\n_Escribe tu duda y la IA Gemini te asistirá._`;
       
       return NextResponse.json({
         success: true,
-        accion: "enviar_precios",
-        textoParaEnviar: preciosMsg
+        accion: "enviar_menu",
+        textoParaEnviar: menuMsg
       });
     }
 
-    // 2. Caso: Demo
+    // 2. Caso: Demo Gratuita
     if (textNormalized.includes("demo") || textNormalized === "1") {
-      // Si Make no provee cuentaSeleccionada, usamos valores de respaldo
       const cuenta = cuentaSeleccionada || { id: 1, usuario: "demo_default", contrasena: "123456", Contador_Usos: 0 };
       const resultado = procesarRotacionDemo(cuenta);
 
-      const textoParaEnviar = `📺 *¡Demo gratuita generada con éxito!* 🎉\n\nAquí tienes tus credenciales de acceso válidas por *2 horas*:\n\n👤 *Usuario:* \`${resultado.usuario}\`\n🔑 *Contraseña:* \`${resultado.contrasena}\`\n\n📱 *Guía de instalación:* https://guias-iptv.com/instalacion\n🔢 *Código Downloader:* 82541\n\n_Recuerda que solo se permite una demo por número de celular para evitar abusos._`;
+      const textoParaEnviar = `📺 *¡Demo gratuita generada con éxito!* 🎉\n\nAquí tienes tus credenciales de acceso válidas por *2 horas*:\n\n👤 *Usuario:* \`${resultado.usuario}\`\n🔑 *Contraseña:* \`${resultado.contrasena}\`\n\n📱 *Guía de instalación:* https://guias-iptv.com/instalacion\n🔢 *Código Downloader:* 82541\n\n_Recuerda que si deseas contratar un plan mensual, escribe 2 o 3._`;
 
       let avisoAdmin = "";
       if (resultado.debeCambiarEnPanel) {
-        avisoAdmin = `⚠️ *AVISO ADMINISTRADOR:* La cuenta demo con ID ${resultado.id} (Usuario: ${resultado.usuario}) ha alcanzado un múltiplo de 3 usos. Se ha generado una nueva contraseña: *${resultado.contrasena}*. Por favor, actualízala en el panel IPTV.`;
+        avisoAdmin = `⚠️ *AVISO ADMINISTRADOR:* La cuenta demo con ID ${resultado.id} (Usuario: ${resultado.usuario}) ha alcanzado un múltiplo de 3 usos. Nueva contraseña: *${resultado.contrasena}*.`;
       }
 
       return NextResponse.json({
@@ -49,19 +47,43 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 3. Caso: Menú principal
-    if (textNormalized === "hola" || textNormalized === "menu" || textNormalized === "menú" || textNormalized === "inicio") {
-      const menuMsg = `👋 ¡Hola! Te doy la bienvenida a nuestro servicio de *IPTV Premium* 📺.\n\nElige una opción enviando el número correspondiente:\n\n1️⃣ *Generar demo gratuita* (prueba de 2 horas)\n2️⃣ *Ver precios y datos de pago* (planes mensuales)\n3️⃣ *Recibir guías de instalación* (Downloader / Smart TV)\n\n_Escribe tu duda y te ayudaré con gusto._`;
+    // 3. Caso: Contratar 1 Mes
+    if (textNormalized === "2" || textNormalized.includes("1 mes") || textNormalized.includes("un mes")) {
+      const currentAlias = aliasBrubank || "iptv.venta.mp";
+      const instructivoMsg = `💳 *INSTRUCTIVO PARA ABONAR - PLAN 1 MES PREMIUM* 📺\n\n💵 *Monto a abonar:* $3,500 ARS (1 Mes completo de servicio)\n\n📱 *Datos para Transferir (Mercado Pago / Banco):*\n👉 *Alias Mercado Pago:* \`${currentAlias}\`\n👉 *Titular:* IPTV Ventas S.A.\n\n📌 *Instrucciones para activar tu cuenta:*\n1. Ingresa a Mercado Pago o tu App Bancaria y transfiere $3,500 ARS al Alias \`${currentAlias}\`.\n2. Una vez realizada la transferencia, selecciona la opción *4 ("Ya efectué el pago")* o envía la captura de pantalla de tu comprobante por aquí.\n3. La Inteligencia Artificial Gemini verificará tu transferencia y creará tu **Usuario Final Premium** al instante.`;
       
       return NextResponse.json({
         success: true,
-        accion: "enviar_menu",
-        textoParaEnviar: menuMsg
+        accion: "enviar_precios_1m",
+        textoParaEnviar: instructivoMsg
       });
     }
 
-    // 4. Caso: Guías de instalación
-    if (textNormalized === "3" || textNormalized.includes("guia") || textNormalized.includes("guía")) {
+    // 4. Caso: Contratar 3 Meses
+    if (textNormalized === "3" || textNormalized.includes("3 meses") || textNormalized.includes("tres meses")) {
+      const currentAlias = aliasBrubank || "iptv.venta.mp";
+      const instructivo3mMsg = `💳 *INSTRUCTIVO PARA ABONAR - PLAN 3 MESES PREMIUM* 📺\n\n💵 *Monto a abonar:* $9,000 ARS (3 Meses con Descuento Especial)\n\n📱 *Datos para Transferir (Mercado Pago / Banco):*\n👉 *Alias Mercado Pago:* \`${currentAlias}\`\n👉 *Titular:* IPTV Ventas S.A.\n\n📌 *Instrucciones para activar tu cuenta:*\n1. Ingresa a Mercado Pago o tu App Bancaria y transfiere $9,000 ARS al Alias \`${currentAlias}\`.\n2. Una vez realizada la transferencia, selecciona la opción *4 ("Ya efectué el pago")* o envía la captura de pantalla de tu comprobante por aquí.\n3. La Inteligencia Artificial Gemini verificará tu transferencia y creará tu **Usuario Final Premium** al instante.`;
+      
+      return NextResponse.json({
+        success: true,
+        accion: "enviar_precios_3m",
+        textoParaEnviar: instructivo3mMsg
+      });
+    }
+
+    // 5. Caso: Ya efectué el pago / Crear usuario final
+    if (textNormalized === "4" || textNormalized.includes("pague") || textNormalized.includes("pagué") || textNormalized.includes("efectue") || textNormalized.includes("efectué") || textNormalized.includes("comprobante") || textNormalized.includes("usuario final")) {
+      const pedirComprobanteMsg = `💳 *¡Excelente! Vamos a activar tu Usuario Final Premium.* 🚀\n\n📸 Por favor, **adjunta la foto o captura de pantalla de tu comprobante de pago** aquí mismo en el chat.\n\n🤖 Nuestra *Inteligencia Artificial Gemini* analizará tu captura al instante y generará tus credenciales de acceso automáticamente.`;
+
+      return NextResponse.json({
+        success: true,
+        accion: "pedir_comprobante",
+        textoParaEnviar: pedirComprobanteMsg
+      });
+    }
+
+    // 6. Caso: Guías de instalación
+    if (textNormalized === "5" || textNormalized.includes("guia") || textNormalized.includes("guía") || textNormalized.includes("soporte")) {
       const guiasMsg = `🛠️ *Guías de Instalación y Soporte* ⚙️\n\nInstala nuestro servicio IPTV en cualquier dispositivo de forma simple:\n\n🔥 *Fire TV Stick / TV Box:* \n1. Descarga la app *Downloader* desde la tienda de Amazon.\n2. Ingresa el código Downloader: \`82541\` para bajar la app oficial.\n\n📺 *Smart TV (Samsung/LG):*\nDescarga la app *Smartters Player Lite* o *ibo Player* desde la tienda oficial.\n\n🌐 *Manual web de instalación:* https://guias-iptv.com/instalacion`;
       
       return NextResponse.json({

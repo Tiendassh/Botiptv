@@ -125,19 +125,44 @@ app.post(config.webhookPath, (req, res) => {
         };
       }
     } 
-    // 2. Detectar si pide PRECIOS
-    else if (mensajeUsuario === "2" || mensajeUsuario.toLowerCase().includes("precio")) {
-      const alias = aliasBrubank || "alias.no.configurado";
-      textoParaEnviar = `*Nuestros Planes:*\n` +
-                        `- 1 Mes: $2,500 ARS\n` +
-                        `- 3 Meses: $6,500 ARS\n\n` +
-                        `Para pagar, transfiere al Alias: *${alias}* y envíame el comprobante.`;
+    // 2. Detectar si pide PLAN 1 MES
+    else if (mensajeUsuario === "2" || mensajeUsuario.toLowerCase().includes("1 mes")) {
+      const alias = aliasBrubank || "iptv.venta.mp";
+      textoParaEnviar = `💳 *INSTRUCTIVO PARA ABONAR - PLAN 1 MES PREMIUM* 📺\n\n` +
+                        `💵 *Monto a abonar:* $3,500 ARS\n` +
+                        `📱 *Alias Mercado Pago:* *${alias}*\n` +
+                        `👉 *Titular:* IPTV Ventas S.A.\n\n` +
+                        `📌 *Instrucciones:*\n` +
+                        `1. Transfiere $3,500 ARS al Alias *${alias}*.\n` +
+                        `2. Envía la foto de tu comprobante en este chat o escribe *4* ("Ya efectué el pago").\n` +
+                        `3. La IA Gemini comprobará tu transferencia y creará tu usuario final al instante.`;
     }
-    // 3. Otros mensajes
+    // 3. Detectar si pide PLAN 3 MESES
+    else if (mensajeUsuario === "3" || mensajeUsuario.toLowerCase().includes("3 meses")) {
+      const alias = aliasBrubank || "iptv.venta.mp";
+      textoParaEnviar = `💳 *INSTRUCTIVO PARA ABONAR - PLAN 3 MESES PREMIUM* 📺\n\n` +
+                        `💵 *Monto a abonar:* $9,000 ARS (¡Descuento especial!)\n` +
+                        `📱 *Alias Mercado Pago:* *${alias}*\n` +
+                        `👉 *Titular:* IPTV Ventas S.A.\n\n` +
+                        `📌 *Instrucciones:*\n` +
+                        `1. Transfiere $9,000 ARS al Alias *${alias}*.\n` +
+                        `2. Envía la foto de tu comprobante en este chat o escribe *4* ("Ya efectué el pago").\n` +
+                        `3. La IA Gemini comprobará tu transferencia y creará tu usuario final al instante.`;
+    }
+    // 4. Detectar si dice YA EFECTUÉ EL PAGO
+    else if (mensajeUsuario === "4" || mensajeUsuario.toLowerCase().includes("pago") || mensajeUsuario.toLowerCase().includes("pague")) {
+      textoParaEnviar = `💳 *¡Excelente! Vamos a activar tu Usuario Final Premium.* 🚀\n\n` +
+                        `📸 Por favor, *adjunta la foto o captura de tu comprobante de pago* aquí mismo en el chat.\n\n` +
+                        `🤖 La Inteligencia Artificial analizará tu transferencia y creará tus credenciales al instante.`;
+    }
+    // 5. Otros mensajes / Menú
     else {
-      textoParaEnviar = `Bienvenido al sistema automatizado IPTV.\n` +
-                        `Escribe *1* para pedir una Demo.\n` +
-                        `Escribe *2* para ver Precios.`;
+      textoParaEnviar = `Bienvenido al sistema automatizado IPTV 📺.\n\n` +
+                        `1️⃣ Escribe *1* para Pedir una Demo.\n` +
+                        `2️⃣ Escribe *2* para Contratar 1 Mes.\n` +
+                        `3️⃣ Escribe *3* para Contratar 3 Meses.\n` +
+                        `4️⃣ Escribe *4* si *Ya efectuaste el pago* (Enviar comprobante).\n` +
+                        `5️⃣ Escribe *5* para Guías de Instalación.`;
     }
 
     // Responder a Make

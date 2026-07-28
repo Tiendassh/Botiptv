@@ -30,7 +30,9 @@ import {
   Info,
   Moon,
   Lock,
-  Unlock
+  Unlock,
+  Sparkles,
+  ShieldCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -80,6 +82,12 @@ interface AdminMessage {
   mediaUrl?: string;
   approved?: boolean;
   rejected?: boolean;
+  verifiedByAi?: boolean;
+  paymentDetails?: {
+    monto?: string;
+    opNum?: string;
+    entity?: string;
+  };
 }
 
 interface DemoAccount {
@@ -102,7 +110,9 @@ export default function Home() {
     downloaderCode: "82541",
     installGuideUrl: "https://guias-iptv.com/instalacion",
     demoPrefix: "DEMO_",
-    aiSupportEnabled: true
+    userPrefix: "VIP_",
+    aiSupportEnabled: true,
+    aiReceiptVerificationEnabled: true
   });
 
   // Estado del Bot de WhatsApp
@@ -187,32 +197,137 @@ export default function Home() {
     
     // Si el cliente envía una imagen/comprobante de pago
     if (isMedia && mediaUrl) {
-      setTimeout(() => {
-        setIsTyping(false);
-        const receiptText = "✅ *¡Comprobante de pago recibido!* 🧾\n\nHe reenviado la captura a nuestro administrador para su validación manual inmediata. Te avisaré por aquí en cuanto se verifique tu pago para enviarte tus accesos premium.";
-        const botTimestamp = getStaticTimestamp();
-        setMessages(prev => [...prev, {
-          id: generateRandomId(),
-          sender: "bot",
-          text: receiptText,
-          timestamp: botTimestamp
-        }]);
+      if (config.aiReceiptVerificationEnabled) {
+        // Verificación inteligente de comprobante con IA Gemini
+        setTimeout(async () => {
+          try {
+            // Convertir blob/URL a base64 si es un Blob local
+            let imageBase64 = mediaUrl;
+            if (mediaUrl.startsWith("blob:")) {
+              const blobRes = await fetch(mediaUrl);
+              const blobData = await blobRes.blob();
+              imageBase64 = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.readAsDataURL(blobData);
+              });
+            }
 
-        // Reenviar al Administrador
-        setAdminMessages(prev => [...prev, {
-          id: generateRandomId(),
-          clientNumber: currentClientNumber,
-          text: `🔔 *Nuevo comprobante recibido* de Gus (${currentClientNumber}) para validar pago.`,
-          timestamp: botTimestamp,
-          mediaUrl: mediaUrl,
-          approved: false,
-          rejected: false
-        }]);
-      }, 1500);
+            const verifyRes = await fetch("/api/gemini/verify-receipt", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                imageBase64,
+                config,
+                userPrefix: config.userPrefix || "VIP_"
+              })
+            });
+
+            const data = await verifyRes.json();
+            setIsTyping(false);
+            const botTimestamp = getStaticTimestamp();
+
+            if (data.verified) {
+              // Comprobante Aprobado por la IA -> Entrega de Usuario Final
+              const successText = `🎉 *¡Comprobante Verificado con Éxito por IA Gemini!* ✅\n\n🧾 *Detalles de Pago:* \n• *Monto:* ${data.monto}\n• *Nº Operación:* \`${data.numeroOperacion}\`\n• *Plataforma:* ${data.entidadOBanco}\n\n⭐ *¡TUS ACCESOS PREMIUM HAN SIDO ACTIVADOS!* 🚀\n👤 *Usuario Final:* \`${data.usuarioFinal}\`\n🔑 *Contraseña:* \`${data.contrasenaFinal}\`\n📅 *Duración:* ${data.vencimiento}\n\n📱 *Guía de instalación:* ${config.installGuideUrl}\n🔢 *Código Downloader:* \`${config.downloaderCode}\`\n\n_¡Gracias por tu compra! Tu usuario final se ha generado y activado automáticamente._`;
+
+              setMessages(prev => [...prev, {
+                id: generateRandomId(),
+                sender: "bot",
+                text: successText,
+                timestamp: botTimestamp
+              }]);
+
+              // Registrar en el Inbox del Admin como Auto-Aprobado por IA
+              setAdminMessages(prev => [...prev, {
+                id: generateRandomId(),
+                clientNumber: currentClientNumber,
+                text: `🤖 *Verificación IA Gemini Exitosa:* Se acreditó un pago de ${data.monto} (Nº Op: ${data.numeroOperacion}). Se generó el usuario final *${data.usuarioFinal}* (${data.contrasenaFinal}).`,
+                timestamp: botTimestamp,
+                mediaUrl: mediaUrl,
+                approved: true,
+                rejected: false,
+                verifiedByAi: true,
+                paymentDetails: {
+                  monto: data.monto,
+                  opNum: data.numeroOperacion,
+                  entity: data.entidadOBanco
+                }
+              }]);
+            } else {
+              // No se pudo verificar automáticamente -> Enviar a revisión manual del admin
+              const failText = `⚠️ *Comprobante en Revisión Manual* 🧾\n\nLa Inteligencia Artificial no pudo validar automáticamente esta captura (${data.motivo || "imagen no clara como pago realizado"}).\n\nHe reenviado la captura a nuestro *administrador* para su validación manual inmediata. Te responderemos por aquí a la brevedad.`;
+
+              setMessages(prev => [...prev, {
+                id: generateRandomId(),
+                sender: "bot",
+                text: failText,
+                timestamp: botTimestamp
+              }]);
+
+              setAdminMessages(prev => [...prev, {
+                id: generateRandomId(),
+                clientNumber: currentClientNumber,
+                text: `🔔 *Comprobante Requiere Revisión Manual:* La IA Gemini no pudo verificar el recibo automáticamente (${data.motivo}). Pendiente de aprobación del Administrador.`,
+                timestamp: botTimestamp,
+                mediaUrl: mediaUrl,
+                approved: false,
+                rejected: false,
+                verifiedByAi: false
+              }]);
+            }
+          } catch (err) {
+            console.error("Error al procesar comprobante con Gemini:", err);
+            setIsTyping(false);
+            const botTimestamp = getStaticTimestamp();
+            const fallbackText = "✅ *¡Comprobante de pago recibido!* 🧾\n\nHe reenviado la captura a nuestro administrador para su validación manual inmediata. Te avisaré por aquí en cuanto se verifique tu pago.";
+            
+            setMessages(prev => [...prev, {
+              id: generateRandomId(),
+              sender: "bot",
+              text: fallbackText,
+              timestamp: botTimestamp
+            }]);
+
+            setAdminMessages(prev => [...prev, {
+              id: generateRandomId(),
+              clientNumber: currentClientNumber,
+              text: `🔔 *Nuevo comprobante recibido* de Gus (${currentClientNumber}) para validar pago.`,
+              timestamp: botTimestamp,
+              mediaUrl: mediaUrl,
+              approved: false,
+              rejected: false
+            }]);
+          }
+        }, 1500);
+      } else {
+        // Flujo tradicional sin IA
+        setTimeout(() => {
+          setIsTyping(false);
+          const receiptText = "✅ *¡Comprobante de pago recibido!* 🧾\n\nHe reenviado la captura a nuestro administrador para su validación manual inmediata. Te avisaré por aquí en cuanto se verifique tu pago para enviarte tus accesos premium.";
+          const botTimestamp = getStaticTimestamp();
+          setMessages(prev => [...prev, {
+            id: generateRandomId(),
+            sender: "bot",
+            text: receiptText,
+            timestamp: botTimestamp
+          }]);
+
+          setAdminMessages(prev => [...prev, {
+            id: generateRandomId(),
+            clientNumber: currentClientNumber,
+            text: `🔔 *Nuevo comprobante recibido* de Gus (${currentClientNumber}) para validar pago.`,
+            timestamp: botTimestamp,
+            mediaUrl: mediaUrl,
+            approved: false,
+            rejected: false
+          }]);
+        }, 1500);
+      }
       return;
     }
 
-    // Respuestas automáticas por palabra clave (hola, menu, 1, 2, 3)
+    // Respuestas automáticas por palabra clave (hola, menu, 1, 2, 3, 4, 5)
     const normalizedText = text.trim().toLowerCase();
 
     setTimeout(async () => {
@@ -220,9 +335,9 @@ export default function Home() {
       let reply = "";
 
       if (normalizedText === "hola" || normalizedText === "menu" || normalizedText === "menú" || normalizedText === "inicio") {
-        reply = `👋 ¡Hola nuevamente! Te presento el menú principal 📺:\n\n1️⃣ *Generar demo gratuita* (prueba de 2 horas)\n2️⃣ *Ver precios y datos de pago* (planes mensuales)\n3️⃣ *Recibir guías de instalación* (Downloader / Smart TV)\n\n_Escribe tu pregunta y te responderé con gusto._`;
-      } else if (normalizedText === "1") {
-        // Generar demo utilizando la función externa pura
+        reply = `👋 ¡Hola! Te doy la bienvenida a nuestro servicio de *IPTV Premium* 📺.\n\nElige una opción enviando el número o tocando los botones:\n\n1️⃣ *Pedir Demo Gratuita* (prueba de 2 horas)\n2️⃣ *Contratar 1 Mes* (${config.price1Month})\n3️⃣ *Contratar 3 Meses* (${config.price3Months} - ¡Oferta Especial!)\n4️⃣ *Ya efectué el pago* (Crear Usuario Final / Enviar Comprobante)\n5️⃣ *Guías de Instalación y Soporte*\n\n_Escribe cualquier consulta y la IA Gemini te responderá al instante._`;
+      } else if (normalizedText === "1" || normalizedText.includes("demo")) {
+        // 1. Generar demo
         const { user: randUser, pass: randPass } = generateRandomDemoCredentials(config.demoPrefix);
         const demoTimestamp = getStaticTimestamp();
         
@@ -236,12 +351,18 @@ export default function Home() {
         };
         setDemos(prev => [newDemo, ...prev]);
 
-        reply = `📺 *¡Demo gratuita generada con éxito!* 🎉\n\nAquí tienes tus credenciales de acceso válidas por *2 horas*:\n\n👤 *Usuario:* \`${randUser}\`\n🔑 *Contraseña:* \`${randPass}\`\n\n📱 *Guía de instalación:* ${config.installGuideUrl}\n🔢 *Código Downloader:* \`${config.downloaderCode}\`\n\n_Recuerda que solo se permite una demo gratuita por cliente para evitar abusos._`;
-      } else if (normalizedText === "2") {
-        // Precios y pago
-        reply = `💰 *Planes y Precios del Servicio* 📺\n\nDisfruta de la mejor televisión sin cortes:\n\n⭐ *1 Mes Premium:* \`${config.price1Month}\`\n⭐ *3 Meses Premium:* \`${config.price3Months}\` (¡Descuento!)\n\n📱 *Método de Pago (Mercado Pago / Transferencia):*\n👉 *Alias:* \`${config.paymentAlias}\`\n👉 *Titular:* IPTV Ventas S.A.\n\n⚠️ *IMPORTANTE:* Una vez realizado el pago, envía la captura del comprobante por este chat para que el bot active tus accesos premium automáticamente.`;
-      } else if (normalizedText === "3") {
-        // Guías de instalación
+        reply = `📺 *¡Demo gratuita generada con éxito!* 🎉\n\nAquí tienes tus credenciales de acceso válidas por *2 horas*:\n\n👤 *Usuario:* \`${randUser}\`\n🔑 *Contraseña:* \`${randPass}\`\n\n📱 *Guía de instalación:* ${config.installGuideUrl}\n🔢 *Código Downloader:* \`${config.downloaderCode}\`\n\n_Recuerda que si deseas contratar un plan mensual de 1 o 3 meses, presiona la opción 2 o 3._`;
+      } else if (normalizedText === "2" || normalizedText.includes("1 mes") || normalizedText.includes("un mes") || normalizedText.includes("contratar 1")) {
+        // 2. Contratar 1 Mes + Instructivo
+        reply = `💳 *INSTRUCTIVO PARA ABONAR - PLAN 1 MES PREMIUM* 📺\n\n💵 *Monto a abonar:* \`${config.price1Month}\` (1 Mes completo de servicio)\n\n📱 *Datos para Transferir (Mercado Pago / Banco):*\n👉 *Alias Mercado Pago:* \`${config.paymentAlias}\`\n👉 *Titular:* IPTV Ventas S.A.\n\n📌 *Instrucciones para activar tu cuenta:*\n1. Ingresa a Mercado Pago o tu App Bancaria y transfiere \`${config.price1Month}\` al Alias *\`${config.paymentAlias}\`*.\n2. Una vez realizada la transferencia, presiona el botón *"Ya efectué el pago"* (Opción 4) o envía la foto de tu comprobante en este chat.\n3. La **Inteligencia Artificial Gemini** verificará tu transferencia y creará tu **Usuario Final Premium** al instante.`;
+      } else if (normalizedText === "3" || normalizedText.includes("3 meses") || normalizedText.includes("tres meses") || normalizedText.includes("contratar 3")) {
+        // 3. Contratar 3 Meses + Instructivo
+        reply = `💳 *INSTRUCTIVO PARA ABONAR - PLAN 3 MESES PREMIUM* 📺\n\n💵 *Monto a abonar:* \`${config.price3Months}\` (3 Meses con Descuento Especial)\n\n📱 *Datos para Transferir (Mercado Pago / Banco):*\n👉 *Alias Mercado Pago:* \`${config.paymentAlias}\`\n👉 *Titular:* IPTV Ventas S.A.\n\n📌 *Instrucciones para activar tu cuenta:*\n1. Ingresa a Mercado Pago o tu App Bancaria y transfiere \`${config.price3Months}\` al Alias *\`${config.paymentAlias}\`*.\n2. Una vez realizada la transferencia, presiona el botón *"Ya efectué el pago"* (Opción 4) o envía la foto de tu comprobante en este chat.\n3. La **Inteligencia Artificial Gemini** verificará tu transferencia y creará tu **Usuario Final Premium** al instante.`;
+      } else if (normalizedText === "4" || normalizedText.includes("ya efectue") || normalizedText.includes("ya efectué") || normalizedText.includes("ya pague") || normalizedText.includes("ya pagué") || normalizedText.includes("crear usuario final") || normalizedText.includes("enviar comprobante")) {
+        // 4. Ya efectué el pago / Pedir comprobante amablemente
+        reply = `💳 *¡Excelente! Vamos a validar tu transferencia al instante.* 🚀\n\n📸 Por favor, **adjunta la foto o captura de tu comprobante de pago** aquí mismo en el chat (haz clic en el botón de cámara/imagen abajo o arrastra la foto).\n\n🤖 Nuestra *Inteligencia Artificial Gemini* analizará tu captura en segundos y te generará tus credenciales de *Usuario Final Premium* de forma automatizada.`;
+      } else if (normalizedText === "5" || normalizedText.includes("guia") || normalizedText.includes("guía") || normalizedText.includes("soporte") || normalizedText.includes("instalacion")) {
+        // 5. Guías de instalación
         reply = `🛠️ *Guías de Instalación y Soporte* ⚙️\n\nInstala nuestro servicio IPTV en cualquier dispositivo de forma simple:\n\n🔥 *Fire TV Stick / TV Box:* \n1. Instala la app *Downloader* desde la tienda de Amazon.\n2. Ingresa el código Downloader: \`${config.downloaderCode}\` para bajar la aplicación oficial.\n\n📺 *Smart TV (Samsung/LG):*\nDescarga la app *Smartters Player Lite* o *ibo Player* desde la tienda oficial.\n\n🌐 *Manual web y enlaces:* ${config.installGuideUrl}\n\n_Si tienes problemas de compatibilidad, escríbeme tu duda por aquí._`;
       } else {
         // Usar Gemini AI para responder preguntas libres si está activado
@@ -258,7 +379,7 @@ export default function Home() {
             reply = "🤖 *[Soporte AI]* Lo lamento, estoy experimentando dificultades de conexión. ¿Podrías consultarme nuevamente o elegir una opción del menú?";
           }
         } else {
-          reply = "❌ Opción no reconocida. Por favor, escribe *menu* para ver el menú principal, o presiona 1, 2 o 3.";
+          reply = "❌ Opción no reconocida. Por favor, escribe *menu* para ver las opciones principales, o presiona 1, 2, 3, 4 o 5.";
         }
       }
 
@@ -1016,6 +1137,48 @@ SUPABASE_ANON_KEY=TU_CLAVE_ANONIMA`;
                   <div ref={messagesEndRef} />
                 </div>
 
+                {/* Botones de respuesta rápida para pruebas */}
+                <div className={`px-3 py-2 border-t flex flex-wrap gap-1.5 transition-colors duration-200 ${
+                  chatDarkMode ? "bg-[#1f2c34] border-[#2f3b43]" : "bg-[#f8f9fa] border-gray-200"
+                }`}>
+                  <button
+                    type="button"
+                    onClick={() => handleClientSend("1")}
+                    className="text-xs px-2.5 py-1 rounded-full bg-[#128C7E]/10 hover:bg-[#128C7E]/20 text-[#128C7E] font-medium border border-[#128C7E]/30 transition cursor-pointer"
+                  >
+                    📺 1. Demo Gratuita
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleClientSend("2")}
+                    className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 font-medium border border-emerald-500/30 transition cursor-pointer"
+                  >
+                    💳 2. Contratar 1 Mes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleClientSend("3")}
+                    className="text-xs px-2.5 py-1 rounded-full bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 font-medium border border-purple-500/30 transition cursor-pointer"
+                  >
+                    🚀 3. Contratar 3 Meses
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleClientSend("4")}
+                    className="text-xs px-2.5 py-1 rounded-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 font-medium border border-amber-500/30 transition cursor-pointer"
+                  >
+                    🧾 4. Ya efectué el pago
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-xs px-2.5 py-1 rounded-full bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 font-medium border border-blue-500/30 transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <ImageIcon size={12} />
+                    Adjuntar Comprobante
+                  </button>
+                </div>
+
                 {/* Footer de Entrada de Texto (Enviar mensajes / Comprobantes) */}
                 <div className={`p-3 border-t flex items-center gap-3 transition-colors duration-200 ${
                   chatDarkMode ? "bg-[#1f2c34] border-[#2f3b43]" : "bg-[#F0F0F0] border-gray-200"
@@ -1167,10 +1330,16 @@ SUPABASE_ANON_KEY=TU_CLAVE_ANONIMA`;
                           </div>
                           
                           {/* Insignias de estado */}
-                          {msg.approved && (
+                          {msg.verifiedByAi && (
+                            <span className="text-xs bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1 rounded-full font-bold flex items-center gap-1 shadow-sm">
+                              <Sparkles size={13} className="text-emerald-600 fill-emerald-600" />
+                              VERIFICADO POR IA GEMINI
+                            </span>
+                          )}
+                          {!msg.verifiedByAi && msg.approved && (
                             <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-bold flex items-center gap-1">
                               <CheckCircle2 size={13} />
-                              PAGO APROBADO
+                              PAGO APROBADO MANUALMENTE
                             </span>
                           )}
                           {msg.rejected && (
@@ -1373,6 +1542,74 @@ SUPABASE_ANON_KEY=TU_CLAVE_ANONIMA`;
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#128C7E]"
                       placeholder="Ej: DEMO_"
                     />
+                  </div>
+
+                  {/* Prefijo Usuario Final */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700 uppercase tracking-wider block">Prefijo Usuarios Finales</label>
+                    <input 
+                      type="text"
+                      value={config.userPrefix}
+                      onChange={(e) => setConfig(prev => ({ ...prev, userPrefix: e.target.value }))}
+                      className="w-full bg-slate-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#128C7E]"
+                      placeholder="Ej: VIP_"
+                    />
+                    <p className="text-[10px] text-gray-500">Prefijo con el que la IA crea los usuarios de pago.</p>
+                  </div>
+                </div>
+
+                {/* Toggles de Inteligencia Artificial Gemini */}
+                <div className="mt-6 pt-6 border-t border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Toggle Verificación de Comprobantes */}
+                  <div className="p-4 bg-emerald-50/60 border border-emerald-200/80 rounded-2xl flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles size={16} className="text-emerald-600" />
+                        <span className="text-sm font-bold text-emerald-900">Verificación de Comprobantes por IA Gemini</span>
+                      </div>
+                      <p className="text-xs text-emerald-700 leading-relaxed">
+                        Al recibir una captura de pago en el chat, Gemini la analiza automáticamente y, si es válida, genera y entrega el <strong>usuario final Premium</strong> de inmediato al cliente.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfig(prev => ({ ...prev, aiReceiptVerificationEnabled: !prev.aiReceiptVerificationEnabled }))}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        config.aiReceiptVerificationEnabled ? "bg-emerald-600" : "bg-gray-300"
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          config.aiReceiptVerificationEnabled ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Toggle Respuestas de Soporte AI */}
+                  <div className="p-4 bg-blue-50/60 border border-blue-200/80 rounded-2xl flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <Bot size={16} className="text-blue-600" />
+                        <span className="text-sm font-bold text-blue-900">Soporte y Consultas Libres con IA</span>
+                      </div>
+                      <p className="text-xs text-blue-700 leading-relaxed">
+                        Permite a Gemini responder dudas sobre compatibilidad, lista de canales y precios cuando el usuario escribe preguntas abiertas en el chat.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfig(prev => ({ ...prev, aiSupportEnabled: !prev.aiSupportEnabled }))}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        config.aiSupportEnabled ? "bg-blue-600" : "bg-gray-300"
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          config.aiSupportEnabled ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1589,13 +1826,13 @@ SUPABASE_ANON_KEY=TU_CLAVE_ANONIMA`;
                     <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2">3. Configuración de Supabase:</h4>
                     <p className="text-xs text-gray-600 mb-2">Crea un proyecto en Supabase con dos tablas separadas:</p>
                     <ul className="text-xs text-gray-600 space-y-1.5 list-disc list-inside leading-relaxed mb-3">
-                      <li><strong>Tabla "cuentas_demo":</strong> Crea las columnas <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">id</code>, <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">usuario</code>, <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">contrasena</code>, y <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">contador_usos</code>.<br/>Agrega tus 2 cuentas fijas (Demo1 y Demo2) con sus contraseñas y contador en 0.</li>
-                      <li><strong>Tabla "configuracion":</strong> Crea las columnas <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">variable</code> y <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">valor</code>.<br/>Agrega filas para: url_panel, usuario_panel, contrasena_panel, alias_merca_pago, precio_mes, etc.</li>
+                      <li><strong>Tabla &quot;cuentas_demo&quot;:</strong> Crea las columnas <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">id</code>, <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">usuario</code>, <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">contrasena</code>, y <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">contador_usos</code>.<br/>Agrega tus 2 cuentas fijas (Demo1 y Demo2) con sus contraseñas y contador en 0.</li>
+                      <li><strong>Tabla &quot;configuracion&quot;:</strong> Crea las columnas <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">variable</code> y <code className="bg-gray-200 px-1 py-0.5 rounded text-gray-700 font-mono">valor</code>.<br/>Agrega filas para: url_panel, usuario_panel, contrasena_panel, alias_merca_pago, precio_mes, etc.</li>
                     </ul>
                     <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2 mt-4">4. Despliegue (Deploy) en Render o Railway:</h4>
                     <ol className="text-xs text-gray-600 space-y-1.5 list-decimal list-inside leading-relaxed">
                       <li>Crea una nueva Web Service.</li>
-                      <li>Sube estos archivos y configura el "Start Command" como <code>npm start</code>.</li>
+                      <li>Sube estos archivos y configura el &quot;Start Command&quot; como <code>npm start</code>.</li>
                       <li>Agrega las variables de entorno en la plataforma: <code>SUPABASE_URL</code> y <code>SUPABASE_ANON_KEY</code>.</li>
                       <li>Configura tu Cloudwapi o bot para que envíe el Webhook POST a la URL de tu servicio, con la ruta <code>/webhook-bot</code> enviando <code>telefono</code> y <code>mensajeUsuario</code>.</li>
                     </ol>
